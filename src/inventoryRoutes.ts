@@ -460,7 +460,7 @@ router.get("/suppliers/:id", async (req, res) => {
       where: { id: req.params.id },
       include: {
         purchaseOrders: {
-          select: { status: true, totalAmount: true, issuedDate: true },
+          select: { status: true, totalAmount: true, issuedDate: true, rating: true },
         },
       },
     });
@@ -475,15 +475,20 @@ router.get("/suppliers/:id", async (req, res) => {
       (latest, po) => (!latest || po.issuedDate > latest ? po.issuedDate : latest),
       null
     );
-    // Fulfillment = % of all orders placed with this supplier that were actually RECEIVED.
-    // On-time delivery can't be computed yet — there's no "actual delivered at" timestamp,
-    // only expectedDate, so we don't fabricate that number.
     const fulfillmentRate =
       supplier.purchaseOrders.length > 0
         ? (receivedOrders.length / supplier.purchaseOrders.length) * 100
         : null;
 
-    const { purchaseOrders, ...supplierFields } = supplier;
+    // Product Quality Score = average of ratings given on this supplier's received orders.
+    // Not the static Supplier.rating field — that's a separate, manually-set value.
+    const ratedOrders = supplier.purchaseOrders.filter((po) => po.rating !== null) as { rating: number }[];
+    const qualityScore =
+      ratedOrders.length > 0
+        ? Math.round((ratedOrders.reduce((sum, po) => sum + po.rating, 0) / ratedOrders.length) * 10) / 10
+        : null;
+
+    const { purchaseOrders, rating, ...supplierFields } = supplier;
 
     res.json({
       success: true,
@@ -494,6 +499,8 @@ router.get("/suppliers/:id", async (req, res) => {
         fulfillmentRate,
         totalOrders: supplier.purchaseOrders.length,
         receivedOrderCount: receivedOrders.length,
+        qualityScore,
+        ratedOrderCount: ratedOrders.length,
       },
     });
   } catch (error) {
