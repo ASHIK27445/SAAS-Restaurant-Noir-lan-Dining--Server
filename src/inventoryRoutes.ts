@@ -388,9 +388,9 @@ router.get("/suppliers/directory", async (_req, res) => {
     const suppliers = await prisma.supplier.findMany({
       include: {
         purchaseOrders: {
-          where: { status: "RECEIVED" },
           select: {
             totalAmount: true,
+            status: true,
             expectedDate: true,
             deliveredDate: true,
             rating: true,
@@ -402,19 +402,20 @@ router.get("/suppliers/directory", async (_req, res) => {
     });
 
     const data = suppliers.map((s) => {
-      const totalSpend = s.purchaseOrders.reduce((sum, po) => sum + Number(po.totalAmount), 0);
-      const lastDelivery = s.purchaseOrders.reduce<Date | null>(
+      const receivedOrders = s.purchaseOrders.filter((po) => po.status === "RECEIVED");
+      const totalSpend = receivedOrders.reduce((sum, po) => sum + Number(po.totalAmount), 0);
+      const lastDelivery = receivedOrders.reduce<Date | null>(
         (latest, po) => (!po.deliveredDate || (latest && po.deliveredDate <= latest) ? latest : po.deliveredDate),
         null
       );
-      const ratedOrders = s.purchaseOrders.filter((po) => po.rating !== null);
+      const ratedOrders = receivedOrders.filter((po) => po.rating !== null);
       const rating = ratedOrders.length > 0
         ? Math.round((ratedOrders.reduce((sum, po) => sum + (po.rating ?? 0), 0) / ratedOrders.length) * 10) / 10
         : s.rating && s.rating > 0 ? s.rating : null;
 
       let onTimeTrackedCount = 0;
       let onTimeCount = 0;
-      for (const po of s.purchaseOrders) {
+      for (const po of receivedOrders) {
         if (po.expectedDate && po.deliveredDate) {
           onTimeTrackedCount += 1;
           if (po.deliveredDate <= po.expectedDate) onTimeCount += 1;
@@ -423,7 +424,7 @@ router.get("/suppliers/directory", async (_req, res) => {
 
       let orderedQuantity = 0;
       let receivedQuantity = 0;
-      for (const po of s.purchaseOrders) {
+      for (const po of receivedOrders) {
         for (const item of po.items) {
           if (item.receivedQuantity !== null) {
             orderedQuantity += Number(item.quantity);
@@ -431,6 +432,22 @@ router.get("/suppliers/directory", async (_req, res) => {
           }
         }
       }
+
+      const orderFulfillment = s.purchaseOrders.length > 0
+        ? (receivedOrders.length / s.purchaseOrders.length) * 100
+        : null;
+      const onTimeDelivery = onTimeTrackedCount > 0
+        ? (onTimeCount / onTimeTrackedCount) * 100
+        : null;
+      const productQuality = rating !== null ? (rating / 5) * 100 : null;
+      const demandFulfillment = orderedQuantity > 0
+        ? Math.min((receivedQuantity / orderedQuantity) * 100, 100)
+        : null;
+      const reliabilityScore = [productQuality, onTimeDelivery, orderFulfillment, demandFulfillment].every(
+        (score) => score !== null
+      )
+        ? productQuality! * 0.3 + onTimeDelivery! * 0.25 + orderFulfillment! * 0.25 + demandFulfillment! * 0.2
+        : null;
 
       return {
         id: s.id,
@@ -440,11 +457,16 @@ router.get("/suppliers/directory", async (_req, res) => {
         status: s.status,
         totalSpend,
         lastDelivery,
-        reliabilityScore: onTimeTrackedCount > 0 ? Math.round((onTimeCount / onTimeTrackedCount) * 1000) / 10 : null,
-        qualityAcceptance: orderedQuantity > 0 ? Math.round((receivedQuantity / orderedQuantity) * 1000) / 10 : null,
+        reliabilityScore: reliabilityScore === null ? null : Math.round(reliabilityScore * 10) / 10,
+        productQualityScore: productQuality === null ? null : Math.round(productQuality * 10) / 10,
+        onTimeDeliveryScore: onTimeDelivery === null ? null : Math.round(onTimeDelivery * 10) / 10,
+        orderFulfillmentScore: orderFulfillment === null ? null : Math.round(orderFulfillment * 10) / 10,
+        demandFulfillmentScore: demandFulfillment === null ? null : Math.round(demandFulfillment * 10) / 10,
+        qualityAcceptance: demandFulfillment === null ? null : Math.round(demandFulfillment * 10) / 10,
         onTimeTrackedCount,
         qualityTrackedQuantity: orderedQuantity,
         totalOrders: s.purchaseOrders.length,
+        receivedOrderCount: receivedOrders.length,
         ratedOrderCount: ratedOrders.length,
       };
     });
