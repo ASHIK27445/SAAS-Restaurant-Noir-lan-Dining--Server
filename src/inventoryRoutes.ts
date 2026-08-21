@@ -382,17 +382,20 @@ router.get("/suppliers", async (req, res) => {
 });
 
 // GET /suppliers/directory
-// Aggregates real spend + last-delivery date from RECEIVED purchase orders per supplier.
-// reliabilityScore / qualityAcceptance are null for now — there's no data source for them yet
-// (would need a delivery-performance tracking model). The frontend should render "No data yet"
-// rather than inventing a percentage.
+// Aggregates supplier performance from received purchase orders and their received quantities.
 router.get("/suppliers/directory", async (_req, res) => {
   try {
     const suppliers = await prisma.supplier.findMany({
       include: {
         purchaseOrders: {
           where: { status: "RECEIVED" },
-          select: { totalAmount: true, issuedDate: true },
+          select: {
+            totalAmount: true,
+            expectedDate: true,
+            deliveredDate: true,
+            rating: true,
+            items: { select: { quantity: true, receivedQuantity: true } },
+          },
         },
       },
       orderBy: { name: "asc" },
@@ -401,20 +404,48 @@ router.get("/suppliers/directory", async (_req, res) => {
     const data = suppliers.map((s) => {
       const totalSpend = s.purchaseOrders.reduce((sum, po) => sum + Number(po.totalAmount), 0);
       const lastDelivery = s.purchaseOrders.reduce<Date | null>(
-        (latest, po) => (!latest || po.issuedDate > latest ? po.issuedDate : latest),
+        (latest, po) => (!po.deliveredDate || (latest && po.deliveredDate <= latest) ? latest : po.deliveredDate),
         null
       );
+      const ratedOrders = s.purchaseOrders.filter((po) => po.rating !== null);
+      const rating = ratedOrders.length > 0
+        ? Math.round((ratedOrders.reduce((sum, po) => sum + (po.rating ?? 0), 0) / ratedOrders.length) * 10) / 10
+        : s.rating && s.rating > 0 ? s.rating : null;
+
+      let onTimeTrackedCount = 0;
+      let onTimeCount = 0;
+      for (const po of s.purchaseOrders) {
+        if (po.expectedDate && po.deliveredDate) {
+          onTimeTrackedCount += 1;
+          if (po.deliveredDate <= po.expectedDate) onTimeCount += 1;
+        }
+      }
+
+      let orderedQuantity = 0;
+      let receivedQuantity = 0;
+      for (const po of s.purchaseOrders) {
+        for (const item of po.items) {
+          if (item.receivedQuantity !== null) {
+            orderedQuantity += Number(item.quantity);
+            receivedQuantity += Number(item.receivedQuantity);
+          }
+        }
+      }
 
       return {
         id: s.id,
         name: s.name,
         category: s.category,
-        rating: s.rating,
+        rating,
         status: s.status,
         totalSpend,
         lastDelivery,
-        reliabilityScore: null as number | null,
-        qualityAcceptance: null as number | null,
+        reliabilityScore: onTimeTrackedCount > 0 ? Math.round((onTimeCount / onTimeTrackedCount) * 1000) / 10 : null,
+        qualityAcceptance: orderedQuantity > 0 ? Math.round((receivedQuantity / orderedQuantity) * 1000) / 10 : null,
+        onTimeTrackedCount,
+        qualityTrackedQuantity: orderedQuantity,
+        totalOrders: s.purchaseOrders.length,
+        ratedOrderCount: ratedOrders.length,
       };
     });
 
@@ -716,7 +747,7 @@ router.get("/suppliers/:id", async (req, res) => {
     const totalSpend = receivedOrders.reduce((sum, po) => sum + Number(po.totalAmount), 0);
 
     const lastDelivery = receivedOrders.reduce<Date | null>(
-      (latest, po) => (!latest || po.issuedDate > latest ? po.issuedDate : latest),
+      (latest, po) => (!po.deliveredDate || (latest && po.deliveredDate <= latest) ? latest : po.deliveredDate),
       null
     );
 
