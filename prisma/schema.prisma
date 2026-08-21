@@ -217,6 +217,7 @@ model PurchaseOrder {
   status       PurchaseOrderStatus @default(PENDING)
   issuedDate   DateTime            @default(now())
   expectedDate DateTime?
+  deliveredDate DateTime?           // set automatically when status becomes RECEIVED
   totalAmount  Decimal             @db.Decimal(10, 2) @default(0)
   rating       Float?
 

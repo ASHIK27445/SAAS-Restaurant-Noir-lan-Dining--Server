@@ -386,7 +386,10 @@ router.patch("/purchase-orders/:id/status", async (req, res) => {
 
     const order = await prisma.purchaseOrder.update({
       where: { id },
-      data: { status },
+      data: {
+        status,
+        ...(status === "RECEIVED" ? { deliveredDate: new Date() } : {}),
+      },
       include: { items: true },
     });
 
@@ -454,13 +457,21 @@ router.patch("/purchase-orders/:id/rating", async (req, res) => {
 
 
 // GET /suppliers/:id  (single supplier with real aggregated stats)
+// GET /suppliers/:id  (single supplier with real aggregated stats)
 router.get("/suppliers/:id", async (req, res) => {
   try {
     const supplier = await prisma.supplier.findUnique({
       where: { id: req.params.id },
       include: {
         purchaseOrders: {
-          select: { status: true, totalAmount: true, issuedDate: true, rating: true },
+          select: {
+            status: true,
+            totalAmount: true,
+            issuedDate: true,
+            expectedDate: true,
+            deliveredDate: true,
+            rating: true,
+          },
         },
       },
     });
@@ -470,25 +481,51 @@ router.get("/suppliers/:id", async (req, res) => {
     }
 
     const receivedOrders = supplier.purchaseOrders.filter((po) => po.status === "RECEIVED");
+
     const totalSpend = receivedOrders.reduce((sum, po) => sum + Number(po.totalAmount), 0);
+
     const lastDelivery = receivedOrders.reduce<Date | null>(
       (latest, po) => (!latest || po.issuedDate > latest ? po.issuedDate : latest),
       null
     );
+
     const fulfillmentRate =
       supplier.purchaseOrders.length > 0
         ? (receivedOrders.length / supplier.purchaseOrders.length) * 100
         : null;
 
     // Product Quality Score = average of ratings given on this supplier's received orders.
-    // Not the static Supplier.rating field — that's a separate, manually-set value.
     const ratedOrders = supplier.purchaseOrders.filter((po) => po.rating !== null) as { rating: number }[];
     const qualityScore =
       ratedOrders.length > 0
         ? Math.round((ratedOrders.reduce((sum, po) => sum + po.rating, 0) / ratedOrders.length) * 10) / 10
         : null;
 
-    const { purchaseOrders, rating, ...supplierFields } = supplier;
+    // On-Time Delivery — last 2 months only, and only orders that have both an
+    // expectedDate and a deliveredDate (i.e. actually RECEIVED with a promised date).
+    // "On time" = delivered on or before the expected date.
+    const twoMonthsAgo = new Date();
+    twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+
+    let onTimeTrackedCount = 0;
+    let onTimeCount = 0;
+
+    for (const po of receivedOrders) {
+      if (po.issuedDate < twoMonthsAgo) continue;
+      if (po.expectedDate === null || po.deliveredDate === null) continue;
+
+      const expectedDate: Date = po.expectedDate;
+      const deliveredDate: Date = po.deliveredDate;
+
+      onTimeTrackedCount += 1;
+      if (deliveredDate <= expectedDate) {
+        onTimeCount += 1;
+      }
+    }
+
+    const onTimeDeliveryRate = onTimeTrackedCount > 0 ? (onTimeCount / onTimeTrackedCount) * 100 : null;
+
+    const { purchaseOrders, ...supplierFields } = supplier;
 
     res.json({
       success: true,
@@ -501,6 +538,8 @@ router.get("/suppliers/:id", async (req, res) => {
         receivedOrderCount: receivedOrders.length,
         qualityScore,
         ratedOrderCount: ratedOrders.length,
+        onTimeDeliveryRate,
+        onTimeTrackedCount,
       },
     });
   } catch (error) {
