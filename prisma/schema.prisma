@@ -1,0 +1,263 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id  String  @id @default(cuid())
+  email       String   @unique
+  firebaseUid String   @unique
+
+  name        String?
+  phone       String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Category {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  description String?
+  image       String?
+  isActive    Boolean    @default(true)
+  sortOrder   Int        @default(0)     
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  menuItems   MenuItem[]
+}
+
+model MenuItem {
+  id  String  @id   @default(cuid())
+  name  String @unique
+  description String
+
+  price Decimal @db.Decimal(10, 2)
+  discountPrice Decimal? @db.Decimal(10, 2)
+
+  sku String  @unique
+  image String?
+
+  calories Int?
+
+  isVegan             Boolean             @default(false)
+  isVegetarian        Boolean             @default(false)
+  isGlutenFree        Boolean             @default(false)
+
+  kitchenNotes        String?             @db.Text
+
+  preparationTime     Int?
+  spiceLevel          Int?
+  stockQuantity       Int?
+
+  dietaryType     DietaryType[]
+  allergens       MenuItemAllergen[]
+
+  categoryId String 
+  category Category @relation(fields: [categoryId], references: [id])
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Allergen {
+  id          String      @id @default(cuid())
+
+  name        String      @unique
+
+  createdAt   DateTime    @default(now())
+
+  menuItems   MenuItemAllergen[]
+}
+
+model MenuItemAllergen {
+  menuItemId   String
+  allergenId   String
+
+  menuItem     MenuItem   @relation(fields: [menuItemId], references: [id])
+  allergen     Allergen   @relation(fields: [allergenId], references: [id])
+
+  @@id([menuItemId, allergenId])
+}
+
+enum DietaryType {
+  VEGAN
+  VEGETARIAN
+  GLUTEN_FREE
+}
+
+model Staff {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  role          RoleEnum
+  title         String
+  phone         String
+  avatar        String?
+  isActive      Boolean   @default(false)
+  systemAccess  Boolean   @default(false)
+  online        Boolean   @default(false)
+  location      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([email])
+  @@index([role])
+  @@index([online])
+}
+
+enum RoleEnum {
+  Chef
+  SousChef  
+  Waiter
+  Cashier
+  Manager
+  Admin
+}
+
+// ─────────────────────────────────────────
+// Inventory / Supplier / Procurement module
+// ─────────────────────────────────────────
+
+model Supplier {
+  id          String         @id @default(cuid())
+  name        String
+  category    String         // e.g. "Produce", "Dairy & Cheese", "Meat & Poultry", "Seafood"
+  contactName String?
+  email       String?
+  phone       String?
+  address     String?
+  rating      Float?         @default(0)
+  status      SupplierStatus @default(ACTIVE)
+
+  inventoryItems InventoryItem[]
+  purchaseOrders PurchaseOrder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([category])
+}
+
+enum SupplierStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model InventoryItem {
+  id           String  @id @default(cuid())
+  name         String
+  sku          String  @unique
+  unit         String
+  image        String?
+  category     String  // e.g. "Produce", "Dairy & Cheese", "Meat & Poultry" — same vocabulary as Supplier.category
+
+  currentStock Decimal @db.Decimal(10, 2) @default(0)
+  minThreshold Decimal @db.Decimal(10, 2) @default(0)
+  costPerUnit  Decimal @db.Decimal(10, 2)
+
+  supplierId String?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+
+  stockMovements     StockMovement[]
+  purchaseOrderItems PurchaseOrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supplierId])
+  @@index([category])
+}
+
+enum StockMovementType {
+  RESTOCK
+  USAGE
+  WASTE
+  ADJUSTMENT
+}
+
+model StockMovement {
+  id              String            @id @default(cuid())
+  inventoryItemId String
+  inventoryItem   InventoryItem     @relation(fields: [inventoryItemId], references: [id])
+
+  type     StockMovementType
+  quantity Decimal           @db.Decimal(10, 2) // positive for RESTOCK, negative for USAGE/WASTE, +/- for ADJUSTMENT
+  note     String?
+
+  createdAt DateTime @default(now())
+
+  @@index([inventoryItemId])
+}
+
+enum PurchaseOrderStatus {
+  PENDING
+  SHIPPED
+  RECEIVED
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id           String              @id @default(cuid())
+  poNumber     String              @unique
+  supplierId   String
+  supplier     Supplier            @relation(fields: [supplierId], references: [id])
+  status       PurchaseOrderStatus @default(PENDING)
+  issuedDate   DateTime            @default(now())
+  expectedDate DateTime?
+  totalAmount  Decimal             @db.Decimal(10, 2) @default(0)
+
+  items PurchaseOrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supplierId])
+  @@index([status])
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  inventoryItemId String
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  quantity        Decimal       @db.Decimal(10, 2)
+  unitPrice       Decimal       @db.Decimal(10, 2)
+
+  @@index([purchaseOrderId])
+  @@index([inventoryItemId])
+}
+
+
+model SupplierContact {
+  id            String   @id @default(cuid())
+
+  companyName   String
+  category      String?        // e.g. "Produce", "Seafood" — optional tag, not linked to Supplier.category
+  contactName   String?
+  role          String?        // e.g. "Key Account Manager"
+  email         String?
+  phone         String?
+  address       String?
+  businessHours String?        // e.g. "Mon-Fri, 6am - 2pm"
+  isFavorite    Boolean        @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isFavorite])
+  @@index([category])
+}
