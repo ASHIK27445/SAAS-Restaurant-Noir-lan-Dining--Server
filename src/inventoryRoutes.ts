@@ -416,6 +416,43 @@ router.patch("/purchase-orders/:id/status", async (req, res) => {
   }
 });
 
+// PATCH /purchase-orders/:id/rating  { rating: 0-5, one decimal place, e.g. 4.5 }
+// Only allowed once the order is RECEIVED. Once a rating is set, it can't be changed —
+// this keeps supplier reliability data honest (no retroactive editing).
+router.patch("/purchase-orders/:id/rating", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rating } = req.body as { rating: number };
+
+    const rounded = Math.round(rating * 10) / 10;
+    if (typeof rating !== "number" || Number.isNaN(rating) || rounded < 0 || rounded > 5) {
+      return res.status(400).json({ success: false, message: "rating must be a number between 0 and 5" });
+    }
+
+    const order = await prisma.purchaseOrder.findUnique({ where: { id } });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Purchase order not found" });
+    }
+    if (order.status !== "RECEIVED") {
+      return res.status(400).json({ success: false, message: "Only received orders can be rated" });
+    }
+    if (order.rating !== null) {
+      return res.status(400).json({ success: false, message: "This order has already been rated" });
+    }
+
+    const updated = await prisma.purchaseOrder.update({
+      where: { id },
+      data: { rating: rounded },
+    });
+
+    res.json({ success: true, message: "Order rated", data: updated });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to rate order" });
+  }
+});
+
+
 // GET /suppliers/:id  (single supplier with real aggregated stats)
 router.get("/suppliers/:id", async (req, res) => {
   try {
