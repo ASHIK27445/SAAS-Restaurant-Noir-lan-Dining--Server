@@ -218,6 +218,7 @@ model PurchaseOrder {
   issuedDate   DateTime            @default(now())
   expectedDate DateTime?
   deliveredDate DateTime?           // set automatically when status becomes RECEIVED
+  purchaseAmount Decimal           @db.Decimal(10, 2) @default(0)
   totalAmount  Decimal             @db.Decimal(10, 2) @default(0)
   rating       Float?
 
@@ -238,6 +239,9 @@ model PurchaseOrderItem {
   inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id])
   quantity        Decimal       @db.Decimal(10, 2)
   unitPrice       Decimal       @db.Decimal(10, 2)
+  receivedQuantity  Decimal?    @db.Decimal(10, 2)
+  receivedUnitPrice Decimal?    @db.Decimal(10, 2)
+
 
   @@index([purchaseOrderId])
   @@index([inventoryItemId])

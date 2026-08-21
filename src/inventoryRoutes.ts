@@ -334,7 +334,6 @@ router.get("/purchase-orders", async (req, res) => {
 });
 
 // POST /purchase-orders/create
-// body: { poNumber, supplierId, expectedDate, items: [{ inventoryItemId, quantity, unitPrice }] }
 router.post("/purchase-orders/create", async (req, res) => {
   try {
     const { poNumber, supplierId, expectedDate, items } = req.body as {
@@ -355,7 +354,8 @@ router.post("/purchase-orders/create", async (req, res) => {
         poNumber,
         supplierId,
         expectedDate: expectedDate ? new Date(expectedDate) : null,
-        totalAmount: new Decimal(totalAmount.toString()),
+        purchaseAmount: new Decimal(totalAmount.toFixed(2)),
+        totalAmount: new Decimal(totalAmount.toFixed(2)),
         items: {
           create: items.map((it) => ({
             inventoryItemId: it.inventoryItemId,
@@ -377,42 +377,129 @@ router.post("/purchase-orders/create", async (req, res) => {
   }
 });
 
-// PATCH /purchase-orders/:id/status  { status: "SHIPPED" | "RECEIVED" | "CANCELLED" }
-// When status becomes RECEIVED, this also restocks each inventory item and logs a RESTOCK movement.
+// PATCH /purchase-orders/:id/status
+//
+// body: { status: "SHIPPED" | "CANCELLED" }
+// OR
+// body: { status: "RECEIVED", receivedEverything: true }
+// OR
+// body: { status: "RECEIVED", items: [{ purchaseOrderItemId, receivedQuantity, receivedUnitPrice }] }
+//
+// Marking RECEIVED recomputes totalAmount from the real received quantity × received unit
+// price for every item. purchaseAmount (set at order creation) is never touched, so it
+// stays as a safety record of what was originally ordered. Also restocks inventory using
+// the RECEIVED quantity (not the ordered quantity) and logs a RESTOCK movement per item.
 router.patch("/purchase-orders/:id/status", async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body as { status: PurchaseOrderStatus };
+    const body = req.body as {
+      status: PurchaseOrderStatus;
+      receivedEverything?: boolean;
+      items?: { purchaseOrderItemId: string; receivedQuantity: number; receivedUnitPrice: number }[];
+    };
 
-    const order = await prisma.purchaseOrder.update({
+    if (body.status !== "RECEIVED") {
+      const order = await prisma.purchaseOrder.update({
+        where: { id },
+        data: { status: body.status },
+        include: { items: true },
+      });
+      return res.json({ success: true, message: "Purchase order status updated", data: order });
+    }
+
+    // ── RECEIVED path ──
+    const order = await prisma.purchaseOrder.findUnique({
       where: { id },
-      data: {
-        status,
-        ...(status === "RECEIVED" ? { deliveredDate: new Date() } : {}),
-      },
       include: { items: true },
     });
 
-    if (status === "RECEIVED") {
-      await prisma.$transaction(
-        order.items.flatMap((it) => [
-          prisma.stockMovement.create({
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Purchase order not found" });
+    }
+    
+    if (order.status !== "SHIPPED") {
+      return res.status(400).json({ success: false, message: "Only shipped orders can be received" });
+    }
+
+    const receivedMap = new Map<string, { quantity: number; unitPrice: number }>();
+
+    if (body.receivedEverything) {
+      for (const it of order.items) {
+        receivedMap.set(it.id, { quantity: Number(it.quantity), unitPrice: Number(it.unitPrice) });
+      }
+    } else {
+      if (!body.items?.length) {
+        return res
+          .status(400)
+          .json({ success: false, message: "items are required unless receivedEverything is true" });
+      }
+      for (const it of body.items) {
+        if (it.receivedQuantity < 0 || it.receivedUnitPrice < 0) {
+          return res
+            .status(400)
+            .json({ success: false, message: "receivedQuantity and receivedUnitPrice must be >= 0" });
+        }
+        receivedMap.set(it.purchaseOrderItemId, {
+          quantity: it.receivedQuantity,
+          unitPrice: it.receivedUnitPrice,
+        });
+      }
+      const missing = order.items.filter((it) => !receivedMap.has(it.id));
+      if (missing.length > 0) {
+        return res
+          .status(400)
+          .json({ success: false, message: "All line items must be included when not receiving everything" });
+      }
+    }
+
+    let newTotal = 0;
+    for (const it of order.items) {
+      const r = receivedMap.get(it.id)!;
+      newTotal += r.quantity * r.unitPrice;
+    }
+
+    const now = new Date();
+
+    const updatedOrder = await prisma.$transaction(async (tx) => {
+      for (const it of order.items) {
+        const r = receivedMap.get(it.id)!;
+
+        await tx.purchaseOrderItem.update({
+          where: { id: it.id },
+          data: {
+            receivedQuantity: new Decimal(r.quantity.toString()),
+            receivedUnitPrice: new Decimal(r.unitPrice.toString()),
+          },
+        });
+
+        if (r.quantity > 0) {
+          await tx.stockMovement.create({
             data: {
               inventoryItemId: it.inventoryItemId,
               type: "RESTOCK",
-              quantity: it.quantity,
+              quantity: new Decimal(r.quantity.toString()),
               note: `Received from PO ${order.poNumber}`,
             },
-          }),
-          prisma.inventoryItem.update({
+          });
+          await tx.inventoryItem.update({
             where: { id: it.inventoryItemId },
-            data: { currentStock: { increment: Number(it.quantity) } },
-          }),
-        ])
-      );
-    }
+            data: { currentStock: { increment: r.quantity } },
+          });
+        }
+      }
 
-    res.json({ success: true, message: "Purchase order status updated", data: order });
+      return tx.purchaseOrder.update({
+        where: { id },
+        data: {
+          status: "RECEIVED",
+          deliveredDate: now,
+          totalAmount: new Decimal(newTotal.toFixed(2)),
+        },
+        include: { items: { include: { inventoryItem: true } }, supplier: true },
+      });
+    });
+
+    res.json({ success: true, message: "Purchase order received", data: updatedOrder });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: "Failed to update purchase order status" });
@@ -457,7 +544,6 @@ router.patch("/purchase-orders/:id/rating", async (req, res) => {
 
 
 // GET /suppliers/:id  (single supplier with real aggregated stats)
-// GET /suppliers/:id  (single supplier with real aggregated stats)
 router.get("/suppliers/:id", async (req, res) => {
   try {
     const supplier = await prisma.supplier.findUnique({
@@ -465,12 +551,20 @@ router.get("/suppliers/:id", async (req, res) => {
       include: {
         purchaseOrders: {
           select: {
+            poNumber: true,
             status: true,
             totalAmount: true,
             issuedDate: true,
             expectedDate: true,
             deliveredDate: true,
             rating: true,
+            items: {
+              select: {
+                quantity: true,
+                receivedQuantity: true,
+                inventoryItem: { select: { name: true, unit: true } },
+              },
+            },
           },
         },
       },
@@ -494,16 +588,12 @@ router.get("/suppliers/:id", async (req, res) => {
         ? (receivedOrders.length / supplier.purchaseOrders.length) * 100
         : null;
 
-    // Product Quality Score = average of ratings given on this supplier's received orders.
     const ratedOrders = supplier.purchaseOrders.filter((po) => po.rating !== null) as { rating: number }[];
     const qualityScore =
       ratedOrders.length > 0
         ? Math.round((ratedOrders.reduce((sum, po) => sum + po.rating, 0) / ratedOrders.length) * 10) / 10
         : null;
 
-    // On-Time Delivery — last 2 months only, and only orders that have both an
-    // expectedDate and a deliveredDate (i.e. actually RECEIVED with a promised date).
-    // "On time" = delivered on or before the expected date.
     const twoMonthsAgo = new Date();
     twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
 
@@ -525,6 +615,47 @@ router.get("/suppliers/:id", async (req, res) => {
 
     const onTimeDeliveryRate = onTimeTrackedCount > 0 ? (onTimeCount / onTimeTrackedCount) * 100 : null;
 
+    // Shortage report — year to date, based on received orders only. A shortage is any
+    // line item where the actual received quantity came in under the ordered quantity.
+    const currentYear = new Date().getFullYear();
+    const shortages: {
+      poNumber: string;
+      itemName: string;
+      unit: string;
+      orderedQuantity: number;
+      receivedQuantity: number;
+      shortageQuantity: number;
+      deliveredDate: string | null;
+    }[] = [];
+
+    for (const po of receivedOrders) {
+      const deliveredYear = po.deliveredDate ? po.deliveredDate.getFullYear() : null;
+      if (deliveredYear !== currentYear) continue;
+
+      for (const item of po.items) {
+        if (item.receivedQuantity === null) continue;
+        const ordered = Number(item.quantity);
+        const received = Number(item.receivedQuantity);
+        if (received < ordered) {
+          shortages.push({
+            poNumber: po.poNumber,
+            itemName: item.inventoryItem.name,
+            unit: item.inventoryItem.unit,
+            orderedQuantity: ordered,
+            receivedQuantity: received,
+            shortageQuantity: Math.round((ordered - received) * 100) / 100,
+            deliveredDate: po.deliveredDate ? po.deliveredDate.toISOString() : null,
+          });
+        }
+      }
+    }
+
+    shortages.sort((a, b) =>
+      !a.deliveredDate || !b.deliveredDate
+        ? 0
+        : new Date(b.deliveredDate).getTime() - new Date(a.deliveredDate).getTime()
+    );
+
     const { purchaseOrders, ...supplierFields } = supplier;
 
     res.json({
@@ -540,6 +671,8 @@ router.get("/suppliers/:id", async (req, res) => {
         ratedOrderCount: ratedOrders.length,
         onTimeDeliveryRate,
         onTimeTrackedCount,
+        shortageCount: shortages.length,
+        shortages,
       },
     });
   } catch (error) {
