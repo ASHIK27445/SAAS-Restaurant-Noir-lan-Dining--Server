@@ -324,6 +324,40 @@ router.get("/inventory/:id/usage", async (req, res) => {
   }
 });
 
+// GET /inventory-usage-overview?days=30
+// One aggregate query for the stock table's at-a-glance usage columns.
+router.get("/inventory-usage-overview", async (req, res) => {
+  try {
+    const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+    const now = new Date();
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - days + 1);
+
+    const movements = await prisma.stockMovement.findMany({
+      where: { type: "USAGE", createdAt: { gte: start, lte: now } },
+      select: { inventoryItemId: true, quantity: true },
+    });
+    const totals = new Map<string, number>();
+    for (const movement of movements) {
+      totals.set(movement.inventoryItemId, (totals.get(movement.inventoryItemId) ?? 0) + Math.abs(Number(movement.quantity)));
+    }
+
+    res.json({
+      success: true,
+      days,
+      data: [...totals.entries()].map(([itemId, totalUsage]) => ({
+        itemId,
+        totalUsage,
+        averageDailyUsage: totalUsage / days,
+      })),
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to fetch usage overview" });
+  }
+});
+
 // ───────────── Suppliers ─────────────
 
 // GET /suppliers ?search=&category=&status=
