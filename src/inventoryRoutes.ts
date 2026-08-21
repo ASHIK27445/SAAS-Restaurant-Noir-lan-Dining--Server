@@ -221,6 +221,109 @@ router.delete("/inventory/:id", async (req, res) => {
   }
 });
 
+// GET /inventory/:id/usage  ?days=14&months=6
+// Daily/monthly usage report built from StockMovement records of type USAGE.
+// Each adjustStock call already timestamps its movement, so "daily recording" is
+// automatic — this route just buckets that history by day and by month.
+router.get("/inventory/:id/usage", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const days = Number(req.query.days) || 14;
+    const months = Number(req.query.months) || 6;
+
+    const item = await prisma.inventoryItem.findUnique({ where: { id } });
+    if (!item) {
+      return res.status(404).json({ success: false, message: "Inventory item not found" });
+    }
+
+    const movements = await prisma.stockMovement.findMany({
+      where: { inventoryItemId: id, type: "USAGE" },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const now = new Date();
+
+    // Daily buckets for the last `days` days (including today)
+    const dailyMap = new Map<string, number>();
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      dailyMap.set(d.toISOString().slice(0, 10), 0);
+    }
+
+    // Monthly buckets for the last `months` months (including this month)
+    const monthlyMap = new Map<string, number>();
+    for (let i = months - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      monthlyMap.set(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, 0);
+    }
+
+    for (const m of movements) {
+      const used = Math.abs(Number(m.quantity)); // USAGE is stored as a negative delta
+      const dayKey = m.createdAt.toISOString().slice(0, 10);
+      if (dailyMap.has(dayKey)) {
+        dailyMap.set(dayKey, dailyMap.get(dayKey)! + used);
+      }
+      const monthKey = `${m.createdAt.getFullYear()}-${String(m.createdAt.getMonth() + 1).padStart(2, "0")}`;
+      if (monthlyMap.has(monthKey)) {
+        monthlyMap.set(monthKey, monthlyMap.get(monthKey)! + used);
+      }
+    }
+
+    const dailyUsage = [...dailyMap.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([date, quantity]) => ({ date, quantity: Math.round(quantity * 100) / 100 }));
+
+    const monthlyUsage = [...monthlyMap.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([month, quantity]) => ({ month, quantity: Math.round(quantity * 100) / 100 }));
+
+    // Average daily usage — total usage divided by the number of days actually tracked
+    // (capped at the requested window), so a brand-new item isn't diluted by days
+    // before it ever had a recorded usage.
+    let averageDailyUsage: number | null = null;
+
+    const earliestMovement = movements[0];
+
+    if (earliestMovement) {
+      const earliest = earliestMovement.createdAt;
+
+      const daysSinceStart = Math.max(
+        1,
+        Math.ceil(
+          (now.getTime() - earliest.getTime()) /
+            (1000 * 60 * 60 * 24)
+        ) + 1
+      );
+
+      const windowDays = Math.min(days, daysSinceStart);
+
+      const totalInWindow = dailyUsage
+        .slice(-windowDays)
+        .reduce((sum, d) => sum + d.quantity, 0);
+
+      averageDailyUsage =
+        Math.round((totalInWindow / windowDays) * 100) / 100;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        itemId: item.id,
+        itemName: item.name,
+        unit: item.unit,
+        currentStock: item.currentStock,
+        dailyUsage,
+        monthlyUsage,
+        averageDailyUsage,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to fetch usage report" });
+  }
+});
+
 // ───────────── Suppliers ─────────────
 
 // GET /suppliers ?search=&category=&status=
