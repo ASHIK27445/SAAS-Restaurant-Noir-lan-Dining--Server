@@ -407,6 +407,42 @@ router.post("/attendance/check-out", async (req, res) => {
   }
 });
 
+router.patch("/attendance/times", async (req, res) => {
+  try {
+    const { staffId, date, checkIn, checkOut } = req.body as { staffId: string; date: string; checkIn?: string; checkOut?: string };
+    if (!staffId || !date || (checkIn !== undefined && !/^\d{2}:\d{2}$/.test(checkIn)) || (checkOut !== undefined && !/^\d{2}:\d{2}$/.test(checkOut))) {
+      return res.status(400).json({ success: false, message: "staffId, date, checkIn and checkOut are required" });
+    }
+
+    const existing = await prisma.dailyAttendance.findUnique({ where: { staffId_date: { staffId, date: dateOnly(date) } } });
+    const staff = await prisma.staff.findUnique({ where: { id: staffId } });
+    if (!staff) return res.status(404).json({ success: false, message: "Staff not found" });
+
+    const nextCheckIn = checkIn ?? (existing?.checkIn ? `${String(existing.checkIn.getHours()).padStart(2, "0")}:${String(existing.checkIn.getMinutes()).padStart(2, "0")}` : undefined);
+    const nextCheckOut = checkOut ?? (existing?.checkOut ? `${String(existing.checkOut.getHours()).padStart(2, "0")}:${String(existing.checkOut.getMinutes()).padStart(2, "0")}` : undefined);
+    if (!nextCheckIn || !nextCheckOut) return res.status(400).json({ success: false, message: "Both attendance times are required" });
+    const checkInDate = new Date(`${date}T${nextCheckIn}:00`);
+    const checkOutDate = new Date(`${date}T${nextCheckOut}:00`);
+    if (Number.isNaN(checkInDate.getTime()) || Number.isNaN(checkOutDate.getTime()) || checkOutDate <= checkInDate) return res.status(400).json({ success: false, message: "Check-out must be after check-in" });
+
+    const rawHours = rawHoursBetween(checkInDate, checkOutDate);
+    const hours = roundHours(rawHours);
+    const rate = Number(existing?.rateUsed ?? staff.hourlyRate ?? 0);
+    const regularWage = Math.round(hours * rate * 100) / 100;
+    const totalWage = Math.round((regularWage + Number(existing?.openShiftWage ?? 0) + Number(existing?.bonus ?? 0)) * 100) / 100;
+    const attendance = await prisma.dailyAttendance.upsert({
+      where: { staffId_date: { staffId, date: dateOnly(date) } },
+      create: { staffId, date: dateOnly(date), checkIn: checkInDate, checkOut: checkOutDate, rateUsed: staff.hourlyRate, regularHours: new Decimal(hours.toString()), regularWage: new Decimal(regularWage.toString()), totalWage: new Decimal(totalWage.toString()) },
+      update: { checkIn: checkInDate, checkOut: checkOutDate, regularHours: new Decimal(hours.toString()), regularWage: new Decimal(regularWage.toString()), totalWage: new Decimal(totalWage.toString()) },
+    });
+
+    res.json({ success: true, message: "Attendance times updated", data: attendance });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to update attendance times" });
+  }
+});
+
 // POST /employees/attendance/open-shift-toggle  { staffId, date, attended: boolean, openShiftAssignmentId }
 // Checkbox 3 — hours come from the OpenShift's fixed startTime/endTime, not manual clock.
 router.post("/attendance/open-shift-toggle", async (req, res) => {
