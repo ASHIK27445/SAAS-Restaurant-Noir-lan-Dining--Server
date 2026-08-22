@@ -31,6 +31,12 @@ function timeStringToHours(time: string): number {
   return h + m / 60;
 }
 
+function attendanceDateTime(date: string, time: string, after?: Date): Date {
+  const value = new Date(`${date}T${time}:00`);
+  if (after && value <= after) value.setDate(value.getDate() + 1);
+  return value;
+}
+
 function dateOnly(dateStr: string): Date {
   return new Date(`${dateStr}T00:00:00.000Z`);
 }
@@ -418,22 +424,19 @@ router.patch("/attendance/times", async (req, res) => {
     const staff = await prisma.staff.findUnique({ where: { id: staffId } });
     if (!staff) return res.status(404).json({ success: false, message: "Staff not found" });
 
-    const nextCheckIn = checkIn ?? (existing?.checkIn ? `${String(existing.checkIn.getHours()).padStart(2, "0")}:${String(existing.checkIn.getMinutes()).padStart(2, "0")}` : undefined);
-    const nextCheckOut = checkOut ?? (existing?.checkOut ? `${String(existing.checkOut.getHours()).padStart(2, "0")}:${String(existing.checkOut.getMinutes()).padStart(2, "0")}` : undefined);
-    if (!nextCheckIn || !nextCheckOut) return res.status(400).json({ success: false, message: "Both attendance times are required" });
-    const checkInDate = new Date(`${date}T${nextCheckIn}:00`);
-    const checkOutDate = new Date(`${date}T${nextCheckOut}:00`);
-    if (Number.isNaN(checkInDate.getTime()) || Number.isNaN(checkOutDate.getTime()) || checkOutDate <= checkInDate) return res.status(400).json({ success: false, message: "Check-out must be after check-in" });
+    const checkInDate: Date | null = checkIn ? attendanceDateTime(date, checkIn) : existing?.checkIn ?? null;
+    const checkOutDate: Date | null = checkOut ? attendanceDateTime(date, checkOut, checkInDate ?? undefined) : existing?.checkOut ?? null;
+    if (!checkInDate && !checkOutDate) return res.status(400).json({ success: false, message: "At least one attendance time is required" });
+    if (checkInDate && checkOutDate && (Number.isNaN(checkInDate.getTime()) || Number.isNaN(checkOutDate.getTime()) || checkOutDate <= checkInDate)) return res.status(400).json({ success: false, message: "Check-out must be after check-in" });
 
-    const rawHours = rawHoursBetween(checkInDate, checkOutDate);
-    const hours = roundHours(rawHours);
+    const hours = checkInDate && checkOutDate ? roundHours(rawHoursBetween(checkInDate, checkOutDate)) : null;
     const rate = Number(existing?.rateUsed ?? staff.hourlyRate ?? 0);
-    const regularWage = Math.round(hours * rate * 100) / 100;
-    const totalWage = Math.round((regularWage + Number(existing?.openShiftWage ?? 0) + Number(existing?.bonus ?? 0)) * 100) / 100;
+    const regularWage = hours === null ? null : Math.round(hours * rate * 100) / 100;
+    const totalWage = regularWage === null ? Number(existing?.totalWage ?? 0) : Math.round((regularWage + Number(existing?.openShiftWage ?? 0) + Number(existing?.bonus ?? 0)) * 100) / 100;
     const attendance = await prisma.dailyAttendance.upsert({
       where: { staffId_date: { staffId, date: dateOnly(date) } },
-      create: { staffId, date: dateOnly(date), checkIn: checkInDate, checkOut: checkOutDate, rateUsed: staff.hourlyRate, regularHours: new Decimal(hours.toString()), regularWage: new Decimal(regularWage.toString()), totalWage: new Decimal(totalWage.toString()) },
-      update: { checkIn: checkInDate, checkOut: checkOutDate, regularHours: new Decimal(hours.toString()), regularWage: new Decimal(regularWage.toString()), totalWage: new Decimal(totalWage.toString()) },
+      create: { staffId, date: dateOnly(date), checkIn: checkInDate, checkOut: checkOutDate, rateUsed: staff.hourlyRate, regularHours: hours === null ? null : new Decimal(hours.toString()), regularWage: regularWage === null ? null : new Decimal(regularWage.toString()), totalWage: hours === null ? null : new Decimal(totalWage.toString()) },
+      update: { ...(checkIn ? { checkIn: checkInDate } : {}), ...(checkOut ? { checkOut: checkOutDate } : {}), ...(hours === null ? {} : { regularHours: new Decimal(hours.toString()), regularWage: new Decimal(regularWage!.toString()), totalWage: new Decimal(totalWage.toString()) }) },
     });
 
     res.json({ success: true, message: "Attendance times updated", data: attendance });
