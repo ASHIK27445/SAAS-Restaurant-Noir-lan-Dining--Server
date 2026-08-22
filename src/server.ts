@@ -5,6 +5,7 @@ import { PrismaClient } from "@prisma/client"
 import admin from "./firebaseAdmin";
 import { Decimal } from "@prisma/client/runtime/library";
 import inventoryRoutes from "./inventoryRoutes";
+import employeesRoutes from "./employeesRoutes";
 dotenv.config();
 
 const app = express();
@@ -387,6 +388,9 @@ app.get('/admin/staff/all', async(req, res) => {
 
 //inventory management
 app.use(inventoryRoutes);
+
+//employee management
+app.use("/employees", employeesRoutes);
 
 // Server start 
 app.listen(3000, () => {

@@ -109,8 +109,19 @@ model Staff {
   systemAccess  Boolean   @default(false)
   online        Boolean   @default(false)
   location      String?
+  hourlyRate    Decimal?  @db.Decimal(10, 2)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  // Standing schedule — every staff member (except Admin) works these hours daily.
+  // The restaurant runs every day, so there's no day-off concept here.
+  scheduleStartTime String?   // "HH:MM"
+  scheduleEndTime   String?   // "HH:MM"
+  scheduleLabel     String?   // "Morning Shift", "Night Shift", etc.
+
+  rateHistory          RateHistory[]
+  openShiftAssignments OpenShiftAssignment[]
+  dailyAttendance      DailyAttendance[]
 
   @@index([email])
   @@index([role])
@@ -124,6 +135,98 @@ enum RoleEnum {
   Cashier
   Manager
   Admin
+}
+
+model RateHistory {
+  id            String    @id @default(cuid())
+  staffId       String
+  staff         Staff     @relation(fields: [staffId], references: [id])
+
+  rate          Decimal   @db.Decimal(10, 2)
+  effectiveFrom DateTime
+  effectiveTo   DateTime? // null = currently in effect
+
+  createdAt DateTime @default(now())
+
+  @@index([staffId])
+  @@index([effectiveFrom])
+}
+
+// Ad-hoc shifts only — overtime coverage or one-off events. Regular daily work comes
+// straight from Staff.scheduleStartTime/scheduleEndTime, so there's no "normal shift"
+// model anymore.
+model OpenShift {
+  id        String   @id @default(cuid())
+  date      DateTime @db.Date
+  startTime String   // "HH:MM" — fixed at creation
+  endTime   String   // "HH:MM" — fixed at creation
+  label     String   // "Private Event", "Extra Coverage"...
+  role      String   // role needed for this shift
+
+  assignments OpenShiftAssignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([date])
+}
+
+model OpenShiftAssignment {
+  id               String            @id @default(cuid())
+  openShiftId      String
+  openShift        OpenShift         @relation(fields: [openShiftId], references: [id], onDelete: Cascade)
+  staffId          String
+  staff            Staff             @relation(fields: [staffId], references: [id])
+
+  // Snapshot of the rate to pay for this open shift — defaults to staff.hourlyRate at
+  // assignment time but can be manually overridden (e.g. event bonus rate).
+  rateAtAssignment Decimal           @db.Decimal(10, 2)
+
+  dailyAttendance  DailyAttendance?
+
+  createdAt DateTime @default(now())
+
+  @@unique([openShiftId, staffId])
+  @@index([openShiftId])
+  @@index([staffId])
+}
+
+// The single source of truth for attendance + wages. One row per staff member per day.
+// Saved permanently — this IS the historical record used by daily/monthly/yearly reports.
+
+model DailyAttendance {
+  id      String   @id @default(cuid())
+  staffId String
+  staff   Staff    @relation(fields: [staffId], references: [id])
+  date    DateTime @db.Date
+
+  // Regular schedule attendance (checkboxes 1 & 2)
+  checkIn      DateTime?
+  checkOut     DateTime?
+  rateUsed     Decimal?  @db.Decimal(10, 2) // snapshot of staff.hourlyRate at checkIn
+  regularHours Decimal?  @db.Decimal(5, 2)  // rounded per the >=20min-rounds-up rule
+  regularWage  Decimal?  @db.Decimal(10, 2) // regularHours × rateUsed
+
+  // Open shift attendance (checkbox 3) — only relevant if this staff has an
+  // OpenShiftAssignment for this date. Hours come from the OpenShift's fixed
+  // start/end time, not a separate manual clock.
+  openShiftAssignmentId String?              @unique
+  openShiftAssignment   OpenShiftAssignment? @relation(fields: [openShiftAssignmentId], references: [id])
+  openShiftAttended     Boolean              @default(false)
+  openShiftHours        Decimal?             @db.Decimal(5, 2)
+  openShiftWage         Decimal?             @db.Decimal(10, 2)
+
+  // Manager-given bonus — can be added same-day or later (e.g. end of month)
+  bonus     Decimal  @default(0) @db.Decimal(10, 2)
+
+  totalWage Decimal? @db.Decimal(10, 2) // regularWage + openShiftWage + bonus
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([staffId, date])
+  @@index([staffId])
+  @@index([date])
 }
 
 // ─────────────────────────────────────────
