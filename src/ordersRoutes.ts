@@ -100,10 +100,10 @@ router.get("/next-number", async (_req, res) => {
   }
 });
 
-// GET /orders  ?status=&orderType=&date=YYYY-MM-DD
+// GET /orders  ?status=&orderType=&date=YYYY-MM-DD or fromDate=&toDate=
 router.get("/", async (req, res) => {
   try {
-    const { status, orderType, date } = req.query as Record<string, string>;
+    const { status, orderType, date, fromDate, toDate } = req.query as Record<string, string>;
     const where: any = {};
     if (status) where.status = status;
     if (orderType) where.orderType = orderType;
@@ -111,6 +111,11 @@ router.get("/", async (req, res) => {
       const start = new Date(`${date}T00:00:00.000Z`);
       const end = new Date(`${date}T23:59:59.999Z`);
       where.createdAt = { gte: start, lte: end };
+    } else if (fromDate || toDate) {
+      where.createdAt = {
+        ...(fromDate ? { gte: new Date(`${fromDate}T00:00:00.000Z`) } : {}),
+        ...(toDate ? { lte: new Date(`${toDate}T23:59:59.999Z`) } : {}),
+      };
     }
 
     const orders = await prisma.order.findMany({
