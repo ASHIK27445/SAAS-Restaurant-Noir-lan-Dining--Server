@@ -6,6 +6,8 @@ import admin from "./firebaseAdmin";
 import { Decimal } from "@prisma/client/runtime/library";
 import inventoryRoutes from "./inventoryRoutes";
 import employeesRoutes from "./employeesRoutes";
+import ordersRoutes from "./ordersRoutes";
+
 dotenv.config();
 
 const app = express();
@@ -391,6 +393,9 @@ app.use(inventoryRoutes);
 
 //employee management
 app.use("/employees", employeesRoutes);
+
+//order management
+app.use("/orders", ordersRoutes);
 
 // Server start 
 app.listen(3000, () => {

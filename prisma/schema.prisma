@@ -25,17 +25,27 @@ model User {
   updatedAt   DateTime @updatedAt
 }
 
+enum CategoryBucket {
+  MEALS
+  DRINKS
+  DESSERTS
+  SIDES
+}
+
 model Category {
-  id          String     @id @default(cuid())
-  name        String     @unique
+  id          String         @id @default(cuid())
+  name        String         @unique
   description String?
   image       String?
-  isActive    Boolean    @default(true)
-  sortOrder   Int        @default(0)     
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  isActive    Boolean        @default(true)
+  sortOrder   Int            @default(0)
+  bucketType  CategoryBucket @default(MEALS) // NEW — which of the 4 POS buckets this falls under
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
-  menuItems   MenuItem[]
+  menuItems MenuItem[]
+
+  @@index([bucketType])
 }
 
 model MenuItem {
@@ -63,6 +73,7 @@ model MenuItem {
 
   dietaryType     DietaryType[]
   allergens       MenuItemAllergen[]
+  orderItems      OrderItem[]
 
   categoryId String 
   category Category @relation(fields: [categoryId], references: [id])
@@ -97,6 +108,109 @@ enum DietaryType {
   GLUTEN_FREE
 }
 
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+  DELIVERY
+}
+
+enum OrderStatus {
+  PREPARING
+  SERVED           // dine-in only
+  OUT_FOR_DELIVERY // delivery only
+  RECEIVED         // delivery only
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+}
+
+model Order {
+  id            String        @id @default(cuid())
+  orderNumber   Int           @unique @default(autoincrement()) // displayed as #00001
+  orderType     OrderType
+  status        OrderStatus   @default(PREPARING)
+
+  // Payment timing differs by type: takeaway/delivery pay upfront at creation;
+  // dine-in pays later, at completion. "status" never implies payment.
+  paymentStatus PaymentStatus @default(UNPAID)
+  paymentMethod String?
+  paidAt        DateTime?
+  cashierName   String?       // snapshot of the active cashier at the moment payment was taken
+
+  serverStaffId String?
+  serverName    String?       // snapshot of the Waiter selected at order creation
+
+  // Dine-in only
+  tableNo       String?
+  guestCount    Int?
+  customerName  String?       // dine-in pays later — note who to bill
+
+  // Delivery only
+  deliveryAddress String?
+
+  note          String?
+  subtotal      Decimal @db.Decimal(10, 2)
+  tax           Decimal @db.Decimal(10, 2)
+  serviceCharge Decimal @db.Decimal(10, 2)
+  total         Decimal @db.Decimal(10, 2)
+
+  items OrderItem[]
+
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([orderType])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id         String   @id @default(cuid())
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+  quantity   Int
+  unitPrice  Decimal  @db.Decimal(10, 2)
+  note       String?
+
+  units OrderItemUnit[]
+
+  @@index([orderId])
+  @@index([menuItemId])
+}
+
+// One row per physical unit ordered (qty=2 Chicken Roast -> 2 rows). Order time comes
+// from orderItem.order.createdAt — not duplicated here. Wait time = prepCompletedAt -
+// order.createdAt. Prep duration = prepCompletedAt - prepStartedAt. Both are useful and
+// distinct: wait time includes queue time before the kitchen even started this unit.
+model OrderItemUnit {
+  id          String    @id @default(cuid())
+  orderItemId String
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  unitIndex   Int       // 1, 2, 3... within the OrderItem
+
+  prepStartedAt   DateTime? // set manually by kitchen staff
+  prepCompletedAt DateTime? // set manually by kitchen staff
+
+  @@index([orderItemId])
+}
+
+// Single mutable pointer to whichever staff member is on cashier duty right now.
+// Updated directly when shifts change — no history tracking requested.
+model CashierSetting {
+  id                   String   @id @default(cuid())
+  activeCashierStaffId String?
+  activeCashier        Staff?   @relation(fields: [activeCashierStaffId], references: [id])
+  updatedAt            DateTime @updatedAt
+}
+
+//----------------staff----------------------------
 model Staff {
   id            String    @id @default(cuid())
   email         String    @unique
@@ -122,6 +236,7 @@ model Staff {
   rateHistory          RateHistory[]
   openShiftAssignments OpenShiftAssignment[]
   dailyAttendance      DailyAttendance[]
+  cashierAssignments   CashierSetting[]
 
   @@index([email])
   @@index([role])
