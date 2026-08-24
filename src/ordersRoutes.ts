@@ -17,12 +17,12 @@ const VALID_TRANSITIONS: Record<OrderType, Partial<Record<OrderStatus, OrderStat
     SERVED: ["CANCELLED"], // dine-in reaches COMPLETED only via /complete-with-payment
   },
   TAKEAWAY: {
-    PREPARING: ["CANCELLED"], // takeaway reaches COMPLETED via a separate pickup confirmation
+    PREPARING: ["COMPLETED", "CANCELLED"],
   },
   DELIVERY: {
     PREPARING: ["OUT_FOR_DELIVERY", "CANCELLED"],
     OUT_FOR_DELIVERY: ["RECEIVED", "CANCELLED"],
-    RECEIVED: ["COMPLETED"],
+    RECEIVED: ["COMPLETED", "CANCELLED"],
   },
 };
 
