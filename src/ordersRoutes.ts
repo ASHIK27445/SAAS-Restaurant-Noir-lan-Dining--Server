@@ -388,4 +388,20 @@ router.get("/kitchen-queue", async (_req, res) => {
   }
 });
 
+// Lightweight payload for the public customer token screen.
+router.get("/token-display", async (_req, res) => {
+  try {
+    const orders = await prisma.order.findMany({
+      where: { status: { in: ["PREPARING", "SERVED", "OUT_FOR_DELIVERY", "RECEIVED"] } },
+      select: { orderNumber: true, status: true, orderType: true, updatedAt: true },
+      orderBy: { updatedAt: "desc" },
+      take: 20,
+    });
+    res.json({ success: true, data: orders });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to fetch token display" });
+  }
+});
+
 export default router;
