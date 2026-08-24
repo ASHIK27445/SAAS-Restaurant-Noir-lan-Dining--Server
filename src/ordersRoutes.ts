@@ -367,8 +367,17 @@ router.get("/kitchen-queue", async (_req, res) => {
         prepCompletedAt: null,
         orderItem: { order: { status: { in: ["PREPARING"] } } },
       },
-      include: {
-        orderItem: { include: { menuItem: true, order: true } },
+      select: {
+        id: true,
+        unitIndex: true,
+        prepStartedAt: true,
+        prepCompletedAt: true,
+        orderItem: {
+          select: {
+            menuItem: { select: { name: true } },
+            order: { select: { orderNumber: true, createdAt: true } },
+          },
+        },
       },
       orderBy: { orderItem: { order: { createdAt: "asc" } } },
     });

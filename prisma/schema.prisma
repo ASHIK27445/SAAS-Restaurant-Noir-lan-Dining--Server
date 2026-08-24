@@ -205,6 +205,7 @@ model OrderItemUnit {
   prepCompletedAt DateTime? // set manually by kitchen staff
 
   @@index([orderItemId])
+  @@index([prepCompletedAt])
 }
 
 // Single mutable pointer to whichever staff member is on cashier duty right now.
