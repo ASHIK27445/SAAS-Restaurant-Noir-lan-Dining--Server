@@ -207,7 +207,7 @@ router.post("/create", async (req, res) => {
         serverName,
         tableNo: (body.orderType === "DINE_IN" ? body.tableNo : null) ?? null,
         guestCount: (body.orderType === "DINE_IN" ? body.guestCount : null) ?? null,
-        customerName: (body.orderType === "DINE_IN" ? body.customerName : null) ?? null,
+        customerName: body.customerName ?? null,
         deliveryAddress: (body.orderType === "DELIVERY" ? body.deliveryAddress : null) ?? null,
         note: body.note ?? null,
         subtotal: new Decimal(subtotal.toFixed(2)),
