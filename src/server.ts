@@ -7,6 +7,7 @@ import inventoryRoutes from "./inventoryRoutes";
 import employeesRoutes from "./employeesRoutes";
 import ordersRoutes from "./ordersRoutes";
 import menuRoutes from "./menuRoutes";
+import posSettingsRoutes from "./posSettingsRoutes";
 
 dotenv.config();
 
@@ -143,6 +144,7 @@ app.use("/employees", employeesRoutes);
 
 //order management
 app.use("/orders", ordersRoutes);
+app.use("/settings", posSettingsRoutes);
 
 // Server start 
 app.listen(3000, () => {

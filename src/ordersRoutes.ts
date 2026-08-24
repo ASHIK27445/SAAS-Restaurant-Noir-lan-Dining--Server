@@ -150,6 +150,7 @@ router.post("/create", async (req, res) => {
       tax: number;
       serviceCharge: number;
       total: number;
+      promoCode?: string;
     };
 
     if (!body.orderType || !body.items?.length) {
@@ -170,6 +171,28 @@ router.post("/create", async (req, res) => {
 
     const upfrontPaid = body.orderType === "TAKEAWAY" || body.orderType === "DELIVERY";
     const cashierName = upfrontPaid ? await getActiveCashierName() : null;
+    const posSetting = await prisma.posSetting.findFirst({ orderBy: { updatedAt: "desc" } });
+    const configuredTaxRate = Number(posSetting?.taxRate ?? 8);
+    const configuredServiceCharge = Number(posSetting?.serviceCharge ?? 0);
+    const subtotal = Number(body.subtotal.toFixed(2));
+    const tax = Number((subtotal * configuredTaxRate / 100).toFixed(2));
+    const serviceCharge = Number((subtotal > 0 ? configuredServiceCharge : 0).toFixed(2));
+    let discount = 0;
+    let appliedPromoCode: string | null = null;
+    if (body.promoCode) {
+      const promo = await prisma.promoCode.findUnique({ where: { code: body.promoCode.trim().toUpperCase() } });
+      if (!promo || !promo.isActive || !promo.showInPos || (promo.usageLimit !== null && promo.usageCount >= promo.usageLimit)) {
+        return res.status(400).json({ success: false, message: "Promo code is invalid or unavailable" });
+      }
+      const claimed = await prisma.promoCode.updateMany({
+        where: { id: promo.id, isActive: true, showInPos: true, ...(promo.usageLimit === null ? {} : { usageCount: { lt: promo.usageLimit } }) },
+        data: { usageCount: { increment: 1 } },
+      });
+      if (claimed.count !== 1) return res.status(400).json({ success: false, message: "Promo code limit reached" });
+      discount = Number((subtotal * Number(promo.discountPercent) / 100).toFixed(2));
+      appliedPromoCode = promo.code;
+    }
+    const total = Number((subtotal + tax + serviceCharge - discount).toFixed(2));
     const now = new Date();
 
     const order = await prisma.order.create({
@@ -187,10 +210,12 @@ router.post("/create", async (req, res) => {
         customerName: (body.orderType === "DINE_IN" ? body.customerName : null) ?? null,
         deliveryAddress: (body.orderType === "DELIVERY" ? body.deliveryAddress : null) ?? null,
         note: body.note ?? null,
-        subtotal: new Decimal(body.subtotal.toFixed(2)),
-        tax: new Decimal(body.tax.toFixed(2)),
-        serviceCharge: new Decimal(body.serviceCharge.toFixed(2)),
-        total: new Decimal(body.total.toFixed(2)),
+        subtotal: new Decimal(subtotal.toFixed(2)),
+        tax: new Decimal(tax.toFixed(2)),
+        serviceCharge: new Decimal(serviceCharge.toFixed(2)),
+        discount: new Decimal(discount.toFixed(2)),
+        promoCode: appliedPromoCode,
+        total: new Decimal(total.toFixed(2)),
         items: {
           create: body.items.map((it) => ({
             menuItemId: it.menuItemId,
