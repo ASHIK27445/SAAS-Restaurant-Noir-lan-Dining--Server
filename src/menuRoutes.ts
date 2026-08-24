@@ -6,7 +6,7 @@ const prisma = new PrismaClient();
 const router = Router();
 
 //menu-create
-router.post('/menu/create', async(req, res)=>{
+router.post('/create', async(req, res)=>{
     try {
         
         const {name,description,price,sku,calories,kitchenNotes, image,dietary = {},
@@ -62,7 +62,7 @@ router.post('/menu/create', async(req, res)=>{
 })
 
 //get-allergens
-router.get('/menu/allergens', async(req, res)=>{
+router.get('/allergens', async(req, res)=>{
   try {
     const allergens = await prisma.allergen.findMany({
       select: {
@@ -87,7 +87,7 @@ router.get('/menu/allergens', async(req, res)=>{
 })
 
 //get-category
-router.get('/menu/categories', async (req, res) => {
+router.get('/categories', async (req, res) => {
   try {
     const categories = await prisma.category.findMany({
       where: { 
@@ -115,7 +115,7 @@ router.get('/menu/categories', async (req, res) => {
 })
 
 // GET /menu/categories all
-router.get('/menu/all/categories', async (req, res) => {
+router.get('/all/categories', async (req, res) => {
   try {
     const categories = await prisma.category.findMany({
       include: {
@@ -133,7 +133,7 @@ router.get('/menu/all/categories', async (req, res) => {
 });
 
 // PUT /menu/category/:id
-router.put('/menu/category/:id', async (req, res) => {
+router.put('/category/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, isActive, image, sortOrder } = req.body;
@@ -179,7 +179,7 @@ router.put('/menu/category/:id', async (req, res) => {
 });
 
 // PATCH /menu/category/:id
-router.patch('/menu/category/:id', async (req, res) => {
+router.patch('/category/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { isActive } = req.body;
@@ -196,7 +196,7 @@ router.patch('/menu/category/:id', async (req, res) => {
 });
 
 //menu-category-create
-router.post('/menu/category/create', async (req, res) => {
+router.post('/category/create', async (req, res) => {
     try {
         const { name, description, isActive, image } = req.body;
 
@@ -259,6 +259,133 @@ router.post('/menu/category/create', async (req, res) => {
             message: "Internal server error",
         });
     }
+});
+
+
+// GET /menu/items  ?search=&categoryId=&isActive=
+router.get("/items", async (req, res) => {
+  try {
+    const { search = "", categoryId, isActive } = req.query as Record<string, string>;
+
+    const items = await prisma.menuItem.findMany({
+      where: {
+        name: { contains: search, mode: "insensitive" },
+        ...(categoryId ? { categoryId } : {}),
+        ...(isActive !== undefined ? { isActive: isActive === "true" } : {}),
+      },
+      include: {
+        category: true,
+        allergens: { include: { allergen: true } },
+      },
+      orderBy: { name: "asc" },
+    });
+
+    res.json({ success: true, data: items });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to fetch menu items" });
+  }
+});
+
+// GET /menu/items/:id
+router.get("/items/:id", async (req, res) => {
+  try {
+    const item = await prisma.menuItem.findUnique({
+      where: { id: req.params.id },
+      include: { category: true, allergens: { include: { allergen: true } } },
+    });
+    if (!item) return res.status(404).json({ success: false, message: "Menu item not found" });
+    res.json({ success: true, data: item });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to fetch menu item" });
+  }
+});
+
+// PUT /menu/items/:id
+// body: same shape as create — name, description, price, sku, categoryId, calories,
+// image, kitchenNotes, isActive, allergens (array of allergen ids), dietary
+router.put("/items/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name, description, price, sku, categoryId, calories, image,
+      kitchenNotes, isActive, allergens, dietary,
+    } = req.body as {
+      name: string; description: string; price: number; sku: string; categoryId: string;
+      calories?: number; image?: string; kitchenNotes?: string; isActive: boolean;
+      allergens?: string[]; dietary?: { vegan?: boolean; vegetarian?: boolean; glutenFree?: boolean };
+    };
+
+    if (!name || !categoryId || price === undefined) {
+      return res.status(400).json({ success: false, message: "name, categoryId and price are required" });
+    }
+
+    const dietaryType: ("VEGAN" | "VEGETARIAN" | "GLUTEN_FREE")[] = [];
+    if (dietary?.vegan) dietaryType.push("VEGAN");
+    if (dietary?.vegetarian) dietaryType.push("VEGETARIAN");
+    if (dietary?.glutenFree) dietaryType.push("GLUTEN_FREE");
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const item = await tx.menuItem.update({
+        where: { id },
+        data: {
+          name,
+          description,
+          price: new Decimal(price.toFixed(2)),
+          ...(sku ? { sku } : {}),
+          categoryId,
+          calories: calories ?? null,
+          image: image || null,
+          kitchenNotes: kitchenNotes || null,
+          isActive,
+          dietaryType,
+        },
+      });
+
+      // Replace allergen links entirely — simplest way to keep the join table in sync
+      await tx.menuItemAllergen.deleteMany({ where: { menuItemId: id } });
+      if (allergens?.length) {
+        await tx.menuItemAllergen.createMany({
+          data: allergens.map((allergenId) => ({ menuItemId: id, allergenId })),
+        });
+      }
+
+      return item;
+    });
+
+    res.json({ success: true, message: "Menu item updated", data: updated });
+  } catch (error: any) {
+    console.error(error);
+    if (error.code === "P2002") {
+      return res.status(409).json({ success: false, message: "Name or SKU already exists" });
+    }
+    res.status(500).json({ success: false, message: "Failed to update menu item" });
+  }
+});
+
+// PATCH /menu/items/:id/status  { isActive }
+router.patch("/items/:id/status", async (req, res) => {
+  try {
+    const { isActive } = req.body as { isActive: boolean };
+    const item = await prisma.menuItem.update({ where: { id: req.params.id }, data: { isActive } });
+    res.json({ success: true, message: "Status updated", data: item });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to update status" });
+  }
+});
+
+// DELETE /menu/items/:id
+router.delete("/items/:id", async (req, res) => {
+  try {
+    await prisma.menuItemAllergen.deleteMany({ where: { menuItemId: req.params.id } });
+    await prisma.menuItem.delete({ where: { id: req.params.id } });
+    res.json({ success: true, message: "Menu item deleted" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to delete menu item" });
+  }
 });
 
 export default router;

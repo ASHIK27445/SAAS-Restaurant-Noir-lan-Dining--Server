@@ -64,7 +64,7 @@ app.post('/auth/user-create', async(req, res)=>{
 })
 
 //menu--------------------------------
-app.use(menuRoutes)
+app.use("/menu", menuRoutes)
 
 //empolyee----------------------------
 app.post('/admin/staff/create', async(req, res)=>{

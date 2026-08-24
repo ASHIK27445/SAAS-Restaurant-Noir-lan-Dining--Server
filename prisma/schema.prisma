@@ -61,6 +61,8 @@ model MenuItem {
 
   calories Int?
 
+  isActive Boolean @default(true)
+
   isVegan             Boolean             @default(false)
   isVegetarian        Boolean             @default(false)
   isGlutenFree        Boolean             @default(false)
