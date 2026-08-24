@@ -89,6 +89,17 @@ router.patch("/cashier-setting", async (req, res) => {
 
 // ───────────── Orders ─────────────
 
+// GET /orders/next-number — preview the next order number for the POS header
+router.get("/next-number", async (_req, res) => {
+  try {
+    const latest = await prisma.order.aggregate({ _max: { orderNumber: true } });
+    res.json({ success: true, data: { orderNumber: (latest._max.orderNumber ?? 0) + 1 } });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to fetch next order number" });
+  }
+});
+
 // GET /orders  ?status=&orderType=&date=YYYY-MM-DD
 router.get("/", async (req, res) => {
   try {
