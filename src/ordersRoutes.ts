@@ -41,6 +41,7 @@ router.get("/menu/items/by-bucket/:bucket", async (req, res) => {
     const bucket = req.params.bucket.toUpperCase();
     const items = await prisma.menuItem.findMany({
       where: {
+        isActive: true,
         category: { bucketType: bucket as any, isActive: true },
       },
       include: { category: true },
