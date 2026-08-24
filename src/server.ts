@@ -1,8 +1,8 @@
 import express from "express"
 import cors from "cors"
 import dotenv from "dotenv"
-import { PrismaClient } from "@prisma/client"
 import admin from "./firebaseAdmin";
+import { prisma } from "./prisma";
 import inventoryRoutes from "./inventoryRoutes";
 import employeesRoutes from "./employeesRoutes";
 import ordersRoutes from "./ordersRoutes";
@@ -12,8 +12,6 @@ import posSettingsRoutes from "./posSettingsRoutes";
 dotenv.config();
 
 const app = express();
-const prisma = new PrismaClient();
-
 app.use(cors());
 app.use(express.json());
 

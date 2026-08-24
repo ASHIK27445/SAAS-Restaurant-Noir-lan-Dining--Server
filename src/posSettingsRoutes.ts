@@ -1,8 +1,7 @@
 import { Router } from "express";
-import { PrismaClient } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
+import { prisma } from "./prisma";
 
-const prisma = new PrismaClient();
 const router = Router();
 
 router.get("/pos-settings", async (_req, res) => {

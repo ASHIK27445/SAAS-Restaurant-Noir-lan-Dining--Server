@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { PrismaClient, OrderType, OrderStatus } from "@prisma/client";
+import { OrderType, OrderStatus } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
+import { prisma } from "./prisma";
 
-const prisma = new PrismaClient();
 const router = Router();
 
 function formatOrderNumber(n: number) {
@@ -44,7 +44,16 @@ router.get("/menu/items/by-bucket/:bucket", async (req, res) => {
         isActive: true,
         category: { bucketType: bucket as any, isActive: true },
       },
-      include: { category: true },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        price: true,
+        discountPrice: true,
+        image: true,
+        categoryId: true,
+        category: { select: { id: true, name: true, bucketType: true } },
+      },
       orderBy: { name: "asc" },
     });
     res.json({ success: true, data: items });

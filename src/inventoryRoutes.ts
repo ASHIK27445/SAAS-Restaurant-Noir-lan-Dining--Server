@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { PrismaClient, StockMovementType, PurchaseOrderStatus } from "@prisma/client";
+import { StockMovementType, PurchaseOrderStatus } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
+import { prisma } from "./prisma";
 
-const prisma = new PrismaClient();
 const router = Router();
 
 // Helper: derive stock status the same way the UI does (in-stock / low-stock / out-of-stock)

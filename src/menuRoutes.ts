@@ -1,8 +1,7 @@
-import { PrismaClient } from "@prisma/client"
 import { Router } from "express";
 import { Decimal } from "@prisma/client/runtime/library";
+import { prisma } from "./prisma";
 
-const prisma = new PrismaClient();
 const router = Router();
 
 //menu-create
