@@ -28,6 +28,14 @@ const MANAGER_MODULES = new Set<AccessModule>([
   AccessModule.USERS,
 ]);
 
+export function isStrongPassword(password: unknown): password is string {
+  return typeof password === "string"
+    && password.length >= 6
+    && /[a-z]/.test(password)
+    && /[A-Z]/.test(password)
+    && /[0-9]/.test(password);
+}
+
 export async function authenticate(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) {

@@ -3,6 +3,7 @@ import { Decimal } from "@prisma/client/runtime/library";
 import { RoleEnum } from "@prisma/client";
 import admin from "./firebaseAdmin";
 import { prisma } from "./prisma";
+import { isStrongPassword } from "./auth";
 
 const router = Router();
 
@@ -105,8 +106,8 @@ router.post("/staff/create", async (req, res) => {
   try {
     const { name, email, password, role, title, phone, image, systemAccess, hourlyRate, scheduleStartTime, scheduleEndTime, scheduleLabel } = req.body;
 
-    if (!name || !email || !password || !role || role === RoleEnum.Customer || !title || password.length < 8) {
-      return res.status(400).json({ success: false, message: "name, email, password (8+ characters), role and title are required" });
+    if (!name || !email || !password || !role || role === RoleEnum.Customer || !title || !isStrongPassword(password)) {
+      return res.status(400).json({ success: false, message: "name, email, password (6+ characters with lowercase, uppercase and number), role and title are required" });
     }
     if (role === RoleEnum.Admin && req.auth?.role !== RoleEnum.Admin) {
       return res.status(403).json({ success: false, message: "Only an Admin can create an Admin account" });

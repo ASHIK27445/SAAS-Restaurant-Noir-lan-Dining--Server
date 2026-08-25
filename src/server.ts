@@ -9,7 +9,7 @@ import ordersRoutes from "./ordersRoutes";
 import menuRoutes from "./menuRoutes";
 import posSettingsRoutes from "./posSettingsRoutes";
 import { AccessGrantStatus, AccessModule, RoleEnum } from "@prisma/client";
-import { authenticate, authorizeRequest, requireRole } from "./auth";
+import { authenticate, authorizeRequest, isStrongPassword, requireRole } from "./auth";
 
 dotenv.config();
 
@@ -127,8 +127,8 @@ app.patch("/auth/access-grants/:id", requireRole(RoleEnum.Admin), async (req, re
 });
 
 app.patch("/auth/users/:uid/password", requireRole(RoleEnum.Admin), async (req, res) => {
-  if (typeof req.body.password !== "string" || req.body.password.length < 8) {
-    return res.status(400).json({ success: false, message: "password must be at least 8 characters" });
+  if (!isStrongPassword(req.body.password)) {
+    return res.status(400).json({ success: false, message: "password must be 6+ characters with lowercase, uppercase, and number" });
   }
   const uid = req.params.uid;
   if (typeof uid !== "string") return res.status(400).json({ success: false, message: "Firebase uid is required" });
@@ -146,8 +146,8 @@ app.post('/admin/staff/create', async(req, res)=>{
         password,
       } = req.body;
 
-      if (!name || !email || !role || !title || role === RoleEnum.Customer || typeof password !== "string" || password.length < 8) {
-        return res.status(400).json({ success: false, message: "name, email, password (8+ characters), role and title are required" });
+      if (!name || !email || !role || !title || role === RoleEnum.Customer || !isStrongPassword(password)) {
+        return res.status(400).json({ success: false, message: "name, email, password (6+ characters with lowercase, uppercase and number), role and title are required" });
       }
       if (role === RoleEnum.Admin && req.auth?.role !== RoleEnum.Admin) {
         return res.status(403).json({ success: false, message: "Only an Admin can create an Admin account" });
