@@ -228,6 +228,7 @@ model PosSetting {
   taxRate         Decimal @default(8) @db.Decimal(5, 2)
   serviceCharge   Decimal @default(0) @db.Decimal(10, 2)
   autoPrintReceipt Boolean @default(true)
+  posPin          String  @default("1234")
   updatedAt       DateTime @updatedAt
 }
 
@@ -287,6 +288,8 @@ enum RoleEnum {
   Manager
   Admin
   DemoAdmin
+  Accountant
+  Supplier
 }
 
 enum AccessModule {

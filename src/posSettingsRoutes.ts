@@ -22,6 +22,7 @@ router.patch("/pos-settings", async (req, res) => {
       taxRate: new Decimal(String(Math.max(0, Number(req.body.taxRate ?? 8)))),
       serviceCharge: new Decimal(String(Math.max(0, Number(req.body.serviceCharge ?? 0)))),
       autoPrintReceipt: Boolean(req.body.autoPrintReceipt),
+      ...(req.body.posPin !== undefined ? { posPin: String(req.body.posPin).replace(/\D/g, "").slice(0, 8) || "1234" } : {}),
     };
     const setting = existing
       ? await prisma.posSetting.update({ where: { id: existing.id }, data })
@@ -30,6 +31,17 @@ router.patch("/pos-settings", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: "Failed to update POS settings" });
+  }
+});
+
+router.post("/pos-pin/verify", async (req, res) => {
+  try {
+    const setting = await prisma.posSetting.findFirst({ orderBy: { updatedAt: "desc" } });
+    const valid = Boolean(setting && String(req.body.pin ?? "") === setting.posPin);
+    res.json({ success: true, valid });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to verify POS PIN" });
   }
 });
 

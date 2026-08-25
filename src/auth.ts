@@ -26,6 +26,7 @@ const MANAGER_MODULES = new Set<AccessModule>([
   AccessModule.ORDERS,
   AccessModule.ATTENDANCE,
   AccessModule.USERS,
+  AccessModule.POS,
 ]);
 
 export function isStrongPassword(password: unknown): password is string {
@@ -73,6 +74,7 @@ function moduleForRequest(req: Request): AccessModule | null {
 export async function authorizeRequest(req: Request, res: Response, next: NextFunction) {
   if (req.path === "/auth/user-create") return next();
   if (!req.auth) return res.status(401).json({ success: false, message: "Authentication required" });
+  if (req.path === "/auth/me") return next();
   if (req.auth.role === RoleEnum.Admin) return next();
   if (req.auth.role === RoleEnum.DemoAdmin) {
     return READ_METHODS.has(req.method)
@@ -83,6 +85,8 @@ export async function authorizeRequest(req: Request, res: Response, next: NextFu
   const module = moduleForRequest(req);
   if (!module) return res.status(403).json({ success: false, message: "This operation is not authorized" });
   if (req.auth.role === RoleEnum.Manager && MANAGER_MODULES.has(module)) return next();
+  if ((req.auth.role === RoleEnum.Cashier || req.auth.role === RoleEnum.Supplier || req.auth.role === RoleEnum.Accountant) && module === AccessModule.POS) return next();
+  if ((req.auth.role === RoleEnum.Supplier || req.auth.role === RoleEnum.Accountant) && module === AccessModule.SUPPLIERS) return next();
 
   const grant = await prisma.accessGrant.findUnique({
     where: { userId_module: { userId: req.auth.id, module } },
