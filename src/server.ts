@@ -8,6 +8,8 @@ import employeesRoutes from "./employeesRoutes";
 import ordersRoutes from "./ordersRoutes";
 import menuRoutes from "./menuRoutes";
 import posSettingsRoutes from "./posSettingsRoutes";
+import { AccessGrantStatus, AccessModule, RoleEnum } from "@prisma/client";
+import { authenticate, authorizeRequest, requireRole } from "./auth";
 
 dotenv.config();
 
@@ -20,56 +22,138 @@ app.get('/', (_req, res)=>{
     res.send("Backend is running")
 })
 
-//user-create
-app.post('/auth/user-create', async(req, res)=>{
-    const {token, name, phone} = req.body
-    
-
-    try{
-        const decoded = await admin.auth().verifyIdToken(token)
-        const email = decoded.email
-        const uid = decoded.uid
-
-        console.log(decoded, email, uid)
-        if (!email || !uid) {
-        return res.status(400).json({ error: "Invalid Firebase token data" });
-        }
-
-        const user = await prisma.user.upsert({
-            where:{
-                email: email
-            },
-            update: {name, phone},
-            create: {
-                email,
-                firebaseUid: uid!,
-                name: name,
-                phone: phone
-            }
-        })
-        console.log(user)
-        res.json({message: "User saved", user})
-
-    }catch (err: any) {
-        console.error("🔥 FIREBASE VERIFY FAILED FULL ERROR:");
-        console.error(err);
-        console.error("MESSAGE:", err?.message);
-
-        return res.status(401).json({
-            error: "Invalid Firebase token",
-            message: err?.message,
-        });
+// The first administrator must be explicitly allowlisted in the environment.
+app.post("/auth/bootstrap-admin", async (req, res) => {
+  try {
+    const decoded = await admin.auth().verifyIdToken(req.body.token);
+    const email = decoded.email?.toLowerCase();
+    if (!email || email !== process.env.INITIAL_ADMIN_EMAIL?.toLowerCase()) {
+      return res.status(403).json({ success: false, message: "This account is not the initial administrator" });
     }
-})
+    const user = await prisma.user.upsert({
+      where: { firebaseUid: decoded.uid },
+      update: { email, name: req.body.name, phone: req.body.phone, role: RoleEnum.Admin, isActive: true },
+      create: { firebaseUid: decoded.uid, email, name: req.body.name, phone: req.body.phone, role: RoleEnum.Admin },
+    });
+    return res.json({ success: true, user });
+  } catch {
+    return res.status(401).json({ success: false, message: "Invalid Firebase ID token" });
+  }
+});
 
-//menu--------------------------------
+app.use(authenticate, authorizeRequest);
+
+app.post("/auth/user-create", async (req, res) => {
+  const decoded = await admin.auth().verifyIdToken(req.headers.authorization!.slice(7));
+  const email = decoded.email?.toLowerCase();
+  if (!email) return res.status(400).json({ success: false, message: "Firebase account has no email" });
+  const user = await prisma.user.upsert({
+    where: { firebaseUid: decoded.uid },
+    update: { email, name: req.body.name, phone: req.body.phone },
+    create: { email, firebaseUid: decoded.uid, name: req.body.name, phone: req.body.phone, role: RoleEnum.Customer },
+  });
+  return res.json({ success: true, message: "User saved", user });
+});
+
+app.get("/auth/me", async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.auth!.id }, include: { accessGrants: true } });
+  return res.json({ success: true, user });
+});
+
+app.get("/auth/users", requireRole(RoleEnum.Admin), async (_req, res) => {
+  const users = await prisma.user.findMany({ orderBy: { createdAt: "desc" }, include: { accessGrants: true } });
+  return res.json({ success: true, data: users });
+});
+
+app.patch("/auth/users/:id", requireRole(RoleEnum.Admin), async (req, res) => {
+  const { name, phone, role, isActive } = req.body as { name?: string; phone?: string; role?: RoleEnum; isActive?: boolean };
+  if (role && !Object.values(RoleEnum).includes(role)) {
+    return res.status(400).json({ success: false, message: "Invalid role" });
+  }
+  const userId = req.params.id;
+  if (typeof userId !== "string") return res.status(400).json({ success: false, message: "User id is required" });
+  const data: { name?: string; phone?: string; role?: RoleEnum; isActive?: boolean } = {};
+  if (name !== undefined) data.name = name;
+  if (phone !== undefined) data.phone = phone;
+  if (role !== undefined) data.role = role;
+  if (isActive !== undefined) data.isActive = isActive;
+  const user = await prisma.user.update({ where: { id: userId }, data });
+  await admin.auth().updateUser(user.firebaseUid, {
+    disabled: isActive === false,
+    ...(name !== undefined ? { displayName: name } : {}),
+  });
+  return res.json({ success: true, data: user });
+});
+
+app.delete("/auth/users/:id", requireRole(RoleEnum.Admin), async (req, res) => {
+  const userId = req.params.id;
+  if (typeof userId !== "string") return res.status(400).json({ success: false, message: "User id is required" });
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) return res.status(404).json({ success: false, message: "User not found" });
+  if (user.id === req.auth!.id) return res.status(400).json({ success: false, message: "You cannot delete your own account" });
+  await admin.auth().deleteUser(user.firebaseUid);
+  await prisma.user.delete({ where: { id: user.id } });
+  return res.json({ success: true, message: "User deleted" });
+});
+
+app.get("/auth/access-grants", requireRole(RoleEnum.Admin, RoleEnum.Manager), async (_req, res) => {
+  const grants = await prisma.accessGrant.findMany({ include: { user: true }, orderBy: { createdAt: "desc" } });
+  return res.json({ success: true, data: grants });
+});
+
+app.post("/auth/access-grants", requireRole(RoleEnum.Admin, RoleEnum.Manager), async (req, res) => {
+  const { userId, module } = req.body as { userId?: string; module?: AccessModule };
+  if (!userId || !module || !Object.values(AccessModule).includes(module)) {
+    return res.status(400).json({ success: false, message: "userId and a valid module are required" });
+  }
+  const isAdmin = req.auth!.role === RoleEnum.Admin;
+  const grant = await prisma.accessGrant.upsert({
+    where: { userId_module: { userId, module } },
+    update: { status: isAdmin ? AccessGrantStatus.APPROVED : AccessGrantStatus.PENDING, requestedBy: req.auth!.id, approvedBy: isAdmin ? req.auth!.id : null, approvedAt: isAdmin ? new Date() : null },
+    create: { userId, module, requestedBy: req.auth!.id, status: isAdmin ? AccessGrantStatus.APPROVED : AccessGrantStatus.PENDING, approvedBy: isAdmin ? req.auth!.id : null, approvedAt: isAdmin ? new Date() : null },
+  });
+  return res.status(201).json({ success: true, data: grant });
+});
+
+app.patch("/auth/access-grants/:id", requireRole(RoleEnum.Admin), async (req, res) => {
+  const { status } = req.body as { status?: "APPROVED" | "REJECTED" };
+  if (!status || ![AccessGrantStatus.APPROVED, AccessGrantStatus.REJECTED].includes(status)) {
+    return res.status(400).json({ success: false, message: "status must be APPROVED or REJECTED" });
+  }
+  const grantId = req.params.id;
+  if (typeof grantId !== "string") return res.status(400).json({ success: false, message: "Grant id is required" });
+  const grant = await prisma.accessGrant.update({ where: { id: grantId }, data: { status: status as AccessGrantStatus, approvedBy: req.auth!.id, approvedAt: new Date() } });
+  return res.json({ success: true, data: grant });
+});
+
+app.patch("/auth/users/:uid/password", requireRole(RoleEnum.Admin), async (req, res) => {
+  if (typeof req.body.password !== "string" || req.body.password.length < 8) {
+    return res.status(400).json({ success: false, message: "password must be at least 8 characters" });
+  }
+  const uid = req.params.uid;
+  if (typeof uid !== "string") return res.status(400).json({ success: false, message: "Firebase uid is required" });
+  await admin.auth().updateUser(uid, { password: req.body.password });
+  return res.json({ success: true, message: "Password updated" });
+});
+
 app.use("/menu", menuRoutes)
 
 //empolyee----------------------------
 app.post('/admin/staff/create', async(req, res)=>{
+  let firebaseUser: admin.auth.UserRecord | undefined;
   try {
       const { name,email,role,title,phone, image, systemAccess,
+        password,
       } = req.body;
+
+      if (!name || !email || !role || !title || role === RoleEnum.Customer || typeof password !== "string" || password.length < 8) {
+        return res.status(400).json({ success: false, message: "name, email, password (8+ characters), role and title are required" });
+      }
+      if (role === RoleEnum.Admin && req.auth?.role !== RoleEnum.Admin) {
+        return res.status(403).json({ success: false, message: "Only an Admin can create an Admin account" });
+      }
+
+      firebaseUser = await admin.auth().createUser({ email, password, displayName: name });
 
       const staff = await prisma.staff.create({
         data: {
@@ -82,6 +166,9 @@ app.post('/admin/staff/create', async(req, res)=>{
           systemAccess,
         },
       });
+      await prisma.user.create({
+        data: { email, firebaseUid: firebaseUser.uid, name, phone: phone || "", role },
+      });
 
       res.status(201).json({
         success: true,
@@ -90,6 +177,7 @@ app.post('/admin/staff/create', async(req, res)=>{
       });
   } catch (error) {
       console.log(error);
+      if (firebaseUser) await admin.auth().deleteUser(firebaseUser.uid).catch(() => undefined);
 
       res.status(500).json({
         success: false,

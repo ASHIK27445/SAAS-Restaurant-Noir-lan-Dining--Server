@@ -18,8 +18,13 @@ model User {
   email       String   @unique
   firebaseUid String   @unique
 
+  role        RoleEnum @default(Customer)
+  isActive    Boolean  @default(true)
+
   name        String?
   phone       String?
+
+  accessGrants AccessGrant[]
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -273,12 +278,47 @@ model Staff {
 }
 
 enum RoleEnum {
+  Customer
   Chef
   SousChef  
   Waiter
   Cashier
   Manager
   Admin
+  DemoAdmin
+}
+
+enum AccessModule {
+  SUPPLIERS
+  INVENTORY
+  EMPLOYEES
+  ORDERS
+  ATTENDANCE
+  POS
+  MENU
+  USERS
+}
+
+enum AccessGrantStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model AccessGrant {
+  id          String            @id @default(cuid())
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  module      AccessModule
+  status      AccessGrantStatus @default(PENDING)
+  requestedBy String
+  approvedBy  String?
+  approvedAt  DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@unique([userId, module])
+  @@index([status])
 }
 
 model RateHistory {

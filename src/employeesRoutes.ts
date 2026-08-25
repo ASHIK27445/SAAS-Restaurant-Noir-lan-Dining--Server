@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { Decimal } from "@prisma/client/runtime/library";
+import { RoleEnum } from "@prisma/client";
+import admin from "./firebaseAdmin";
 import { prisma } from "./prisma";
 
 const router = Router();
@@ -99,15 +101,22 @@ router.get("/staff/:id", async (req, res) => {
 });
 
 router.post("/staff/create", async (req, res) => {
+  let firebaseUser: admin.auth.UserRecord | undefined;
   try {
-    const { name, email, role, title, phone, image, systemAccess, hourlyRate, scheduleStartTime, scheduleEndTime, scheduleLabel } = req.body;
+    const { name, email, password, role, title, phone, image, systemAccess, hourlyRate, scheduleStartTime, scheduleEndTime, scheduleLabel } = req.body;
 
-    if (!name || !email || !role || !title) {
-      return res.status(400).json({ success: false, message: "name, email, role and title are required" });
+    if (!name || !email || !password || !role || role === RoleEnum.Customer || !title || password.length < 8) {
+      return res.status(400).json({ success: false, message: "name, email, password (8+ characters), role and title are required" });
+    }
+    if (role === RoleEnum.Admin && req.auth?.role !== RoleEnum.Admin) {
+      return res.status(403).json({ success: false, message: "Only an Admin can create an Admin account" });
     }
 
-    const staff = await prisma.staff.create({
-      data: {
+    firebaseUser = await admin.auth().createUser({ email, password, displayName: name });
+
+    const staff = await prisma.$transaction(async (transaction) => {
+      const createdStaff = await transaction.staff.create({
+        data: {
         name, email, role, title,
         phone: phone || "",
         avatar: image || null,
@@ -116,20 +125,41 @@ router.post("/staff/create", async (req, res) => {
         scheduleStartTime: scheduleStartTime || null,
         scheduleEndTime: scheduleEndTime || null,
         scheduleLabel: scheduleLabel || null,
-      },
-    });
-
-    if (hourlyRate !== undefined) {
-      await prisma.rateHistory.create({
-        data: { staffId: staff.id, rate: new Decimal(hourlyRate.toString()), effectiveFrom: new Date(), effectiveTo: null },
+        },
       });
-    }
+      await transaction.user.create({
+        data: { email, firebaseUid: firebaseUser!.uid, name, phone: phone || "", role },
+      });
+      if (hourlyRate !== undefined) {
+        await transaction.rateHistory.create({
+          data: { staffId: createdStaff.id, rate: new Decimal(hourlyRate.toString()), effectiveFrom: new Date(), effectiveTo: null },
+        });
+      }
+      return createdStaff;
+    });
 
     res.status(201).json({ success: true, message: "Staff created successfully", data: staff });
   } catch (error: any) {
     console.error(error);
+    if (firebaseUser) await admin.auth().deleteUser(firebaseUser.uid).catch(() => undefined);
     if (error.code === "P2002") return res.status(409).json({ success: false, message: "Email already exists" });
+    if (error.code === "auth/email-already-exists") return res.status(409).json({ success: false, message: "Email already exists" });
     res.status(500).json({ success: false, message: "Something went wrong" });
+  }
+});
+
+router.delete("/staff/:id", async (req, res) => {
+  try {
+    const staff = await prisma.staff.findUnique({ where: { id: req.params.id } });
+    if (!staff) return res.status(404).json({ success: false, message: "Staff not found" });
+    const user = await prisma.user.findUnique({ where: { email: staff.email } });
+    if (user) await admin.auth().updateUser(user.firebaseUid, { disabled: true });
+    await prisma.staff.delete({ where: { id: staff.id } });
+    if (user) await prisma.user.update({ where: { id: user.id }, data: { isActive: false } });
+    return res.json({ success: true, message: "Staff deleted successfully" });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: "Failed to delete staff" });
   }
 });
 
@@ -139,6 +169,9 @@ router.patch("/staff/:id", async (req, res) => {
     if (!name || !email || !role || !title) {
       return res.status(400).json({ success: false, message: "name, email, role and title are required" });
     }
+
+    const previousStaff = await prisma.staff.findUnique({ where: { id: req.params.id } });
+    if (!previousStaff) return res.status(404).json({ success: false, message: "Staff not found" });
 
     const staff = await prisma.staff.update({
       where: { id: req.params.id },
@@ -155,6 +188,12 @@ router.patch("/staff/:id", async (req, res) => {
         scheduleLabel: scheduleLabel || null,
       },
     });
+
+    const user = await prisma.user.findUnique({ where: { email: previousStaff.email } });
+    if (user) {
+      await prisma.user.update({ where: { id: user.id }, data: { role, name, phone: phone || "" } });
+      if (email !== previousStaff.email) await admin.auth().updateUser(user.firebaseUid, { email });
+    }
 
     res.json({ success: true, message: "Staff updated successfully", data: staff });
   } catch (error: any) {
