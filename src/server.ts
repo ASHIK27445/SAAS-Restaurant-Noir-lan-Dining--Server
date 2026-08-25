@@ -41,19 +41,25 @@ app.post("/auth/bootstrap-admin", async (req, res) => {
   }
 });
 
-app.use(authenticate, authorizeRequest);
-
 app.post("/auth/user-create", async (req, res) => {
-  const decoded = await admin.auth().verifyIdToken(req.headers.authorization!.slice(7));
-  const email = decoded.email?.toLowerCase();
-  if (!email) return res.status(400).json({ success: false, message: "Firebase account has no email" });
-  const user = await prisma.user.upsert({
-    where: { firebaseUid: decoded.uid },
-    update: { email, name: req.body.name, phone: req.body.phone },
-    create: { email, firebaseUid: decoded.uid, name: req.body.name, phone: req.body.phone, role: RoleEnum.Customer },
-  });
-  return res.json({ success: true, message: "User saved", user });
+  try {
+    const header = req.headers.authorization;
+    if (!header?.startsWith("Bearer ")) return res.status(401).json({ success: false, message: "Authentication required" });
+    const decoded = await admin.auth().verifyIdToken(header.slice(7));
+    const email = decoded.email?.toLowerCase();
+    if (!email) return res.status(400).json({ success: false, message: "Firebase account has no email" });
+    const user = await prisma.user.upsert({
+      where: { firebaseUid: decoded.uid },
+      update: { email, name: req.body.name, phone: req.body.phone },
+      create: { email, firebaseUid: decoded.uid, name: req.body.name, phone: req.body.phone, role: RoleEnum.Customer },
+    });
+    return res.json({ success: true, message: "User saved", user });
+  } catch {
+    return res.status(401).json({ success: false, message: "Invalid Firebase ID token" });
+  }
 });
+
+app.use(authenticate, authorizeRequest);
 
 app.get("/auth/me", async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: req.auth!.id }, include: { accessGrants: true } });
