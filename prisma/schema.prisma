@@ -20,6 +20,7 @@ model User {
 
   role        RoleEnum @default(Customer)
   isActive    Boolean  @default(true)
+  emailVerificationNeeded Boolean @default(true)
 
   name        String?
   phone       String?

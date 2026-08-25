@@ -66,17 +66,18 @@ app.get("/auth/users", requireRole(RoleEnum.Admin), async (_req, res) => {
 });
 
 app.patch("/auth/users/:id", requireRole(RoleEnum.Admin), async (req, res) => {
-  const { name, phone, role, isActive } = req.body as { name?: string; phone?: string; role?: RoleEnum; isActive?: boolean };
+  const { name, phone, role, isActive, emailVerificationNeeded } = req.body as { name?: string; phone?: string; role?: RoleEnum; isActive?: boolean; emailVerificationNeeded?: boolean };
   if (role && !Object.values(RoleEnum).includes(role)) {
     return res.status(400).json({ success: false, message: "Invalid role" });
   }
   const userId = req.params.id;
   if (typeof userId !== "string") return res.status(400).json({ success: false, message: "User id is required" });
-  const data: { name?: string; phone?: string; role?: RoleEnum; isActive?: boolean } = {};
+  const data: { name?: string; phone?: string; role?: RoleEnum; isActive?: boolean; emailVerificationNeeded?: boolean } = {};
   if (name !== undefined) data.name = name;
   if (phone !== undefined) data.phone = phone;
   if (role !== undefined) data.role = role;
   if (isActive !== undefined) data.isActive = isActive;
+  if (emailVerificationNeeded !== undefined) data.emailVerificationNeeded = emailVerificationNeeded;
   const user = await prisma.user.update({ where: { id: userId }, data });
   await admin.auth().updateUser(user.firebaseUid, {
     disabled: isActive === false,
