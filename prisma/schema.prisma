@@ -558,3 +558,18 @@ model SupplierContact {
   @@index([isFavorite])
   @@index([category])
 }
+
+enum InquiryType {
+  GET_STARTED
+  BOOK_A_DEMO
+}
+
+model Inquiry {
+  id        String      @id @default(cuid())
+  email     String
+  type      InquiryType
+  createdAt DateTime    @default(now())
+
+  @@index([type])
+  @@index([createdAt])
+}
