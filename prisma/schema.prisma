@@ -26,9 +26,42 @@ model User {
   phone       String?
 
   accessGrants AccessGrant[]
+  reviews      Review[]
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Review {
+  id             String       @id @default(cuid())
+  displayName    String?
+  isAnonymous    Boolean      @default(true)
+  content        String       @db.Text
+  foodRating     Int
+  serviceRating  Int
+  ambienceRating Int
+  status         ReviewStatus @default(PENDING)
+  showOnHome     Boolean      @default(false)
+  homeOrder      Int          @default(0)
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([status, showOnHome, homeOrder])
+  @@index([createdAt])
+}
+
+model ReviewSetting {
+  id              String   @id @default("default")
+  homeReviewLimit Int      @default(3)
+  updatedAt       DateTime @updatedAt
 }
 
 enum CategoryBucket {
