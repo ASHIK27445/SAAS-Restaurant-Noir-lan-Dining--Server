@@ -12,6 +12,7 @@ import inquiryRoutes from "./inquiryRoutes";
 import reviewRoutes from "./reviewRoutes";
 import reservationRoutes from "./reservationRoutes";
 import publicRoutes from "./publicRoutes";
+import galleryRoutes from "./galleryRoutes";
 import { AccessGrantStatus, AccessModule, RoleEnum } from "@prisma/client";
 import { authenticate, authorizeRequest, isStrongPassword, requireRole } from "./auth";
 
@@ -31,6 +32,7 @@ app.use("/inquiry", inquiryRoutes);
 app.use("/reviews", reviewRoutes);
 app.use("/reservations", reservationRoutes);
 app.use("/public", publicRoutes);
+app.use("/admin/gallery", galleryRoutes);
 
 // The first administrator must be explicitly allowlisted in the environment.
 app.post("/auth/bootstrap-admin", async (req, res) => {

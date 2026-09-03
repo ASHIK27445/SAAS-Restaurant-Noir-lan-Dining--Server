@@ -54,4 +54,18 @@ router.get("/menu", async (_req, res) => {
   }
 });
 
+router.get("/gallery", async (_req, res) => {
+  try {
+    const images = await prisma.galleryImage.findMany({
+      where: { isActive: true },
+      orderBy: [{ category: "asc" }, { sortOrder: "asc" }, { createdAt: "desc" }],
+      select: { id: true, title: true, imageUrl: true, altText: true, category: true, sortOrder: true },
+    });
+    return res.json({ success: true, data: images });
+  } catch (error) {
+    console.error("Failed to load public gallery", error);
+    return res.status(500).json({ success: false, message: "Failed to fetch public gallery" });
+  }
+});
+
 export default router;
