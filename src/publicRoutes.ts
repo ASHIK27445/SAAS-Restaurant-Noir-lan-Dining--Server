@@ -5,25 +5,41 @@ const router = Router();
 
 router.get("/menu", async (_req, res) => {
   try {
-    const categories = await prisma.category.findMany({
-      where: { isActive: true },
-      orderBy: { sortOrder: "asc" },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        bucketType: true,
-        menuItems: {
-          where: { isActive: true },
-          orderBy: { name: "asc" },
-          select: { id: true, name: true, description: true, price: true, discountPrice: true, image: true },
-        },
+    const categorySelect = {
+      id: true,
+      name: true,
+      description: true,
+      bucketType: true,
+      menuItems: {
+        where: { isActive: true },
+        orderBy: { name: "asc" as const },
+        select: { id: true, name: true, description: true, price: true, discountPrice: true, image: true },
       },
-    });
+    } as const;
+    const [categories, specials] = await Promise.all([
+      prisma.category.findMany({
+        where: { isActive: true, NOT: { name: { equals: "Chef's Special", mode: "insensitive" } } },
+        orderBy: { sortOrder: "asc" },
+        select: categorySelect,
+      }),
+      prisma.category.findMany({
+        where: { isActive: true, name: { equals: "Chef's Special", mode: "insensitive" } },
+        orderBy: { sortOrder: "asc" },
+        select: categorySelect,
+      }),
+    ]);
 
     return res.json({
       success: true,
       data: categories.map((category) => ({
+        ...category,
+        menuItems: category.menuItems.map((item) => ({
+          ...item,
+          price: Number(item.discountPrice ?? item.price),
+          originalPrice: item.discountPrice ? Number(item.price) : null,
+        })),
+      })),
+      specials: specials.map((category) => ({
         ...category,
         menuItems: category.menuItems.map((item) => ({
           ...item,

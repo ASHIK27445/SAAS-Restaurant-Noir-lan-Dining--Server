@@ -194,6 +194,34 @@ router.patch('/category/:id', async (req, res) => {
   }
 });
 
+// DELETE /menu/category/:id
+router.delete('/category/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const category = await prisma.category.findUnique({
+      where: { id },
+      include: { _count: { select: { menuItems: true } } },
+    });
+
+    if (!category) {
+      return res.status(404).json({ success: false, message: 'Category not found' });
+    }
+
+    if (category._count.menuItems > 0) {
+      return res.status(409).json({
+        success: false,
+        message: `Cannot delete this category while it contains ${category._count.menuItems} menu item${category._count.menuItems === 1 ? '' : 's'}. Move or delete the items first.`,
+      });
+    }
+
+    await prisma.category.delete({ where: { id } });
+    return res.json({ success: true, message: 'Category deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting category:', error);
+    return res.status(500).json({ success: false, message: 'Failed to delete category' });
+  }
+});
+
 //menu-category-create
 router.post('/category/create', async (req, res) => {
     try {
