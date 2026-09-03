@@ -64,6 +64,32 @@ model ReviewSetting {
   updatedAt       DateTime @updatedAt
 }
 
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+model Reservation {
+  id              String            @id @default(cuid())
+  guestName       String
+  email           String
+  phone           String
+  reservationDate DateTime          @db.Date
+  reservationTime String
+  guestCount      Int
+  specialRequest  String?
+  status          ReservationStatus @default(PENDING)
+  adminNote       String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([reservationDate, reservationTime])
+  @@index([status, reservationDate])
+  @@index([createdAt])
+}
+
 enum CategoryBucket {
   MEALS
   DRINKS
