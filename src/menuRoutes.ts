@@ -135,7 +135,7 @@ router.get('/all/categories', async (req, res) => {
 router.put('/category/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, isActive, image, sortOrder } = req.body;
+    const { name, description, isActive, image, sortOrder, bucketType } = req.body;
     
     // Check if name already exists (excluding current category)
     const existingCategory = await prisma.category.findFirst({
@@ -160,6 +160,7 @@ router.put('/category/:id', async (req, res) => {
         isActive,
         image: image || null,
         sortOrder: sortOrder || 0,
+        ...(bucketType ? { bucketType } : {}),
       }
     });
     
