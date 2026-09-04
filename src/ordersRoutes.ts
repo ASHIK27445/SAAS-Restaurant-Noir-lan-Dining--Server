@@ -98,6 +98,33 @@ router.patch("/cashier-setting", async (req, res) => {
 
 // ───────────── Orders ─────────────
 
+router.get("/cart-draft", async (req, res) => {
+  try {
+    const draft = await prisma.cartDraft.findUnique({ where: { userId: req.auth!.id } });
+    res.json({ success: true, data: draft?.items ?? [] });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to load cart draft" });
+  }
+});
+
+router.put("/cart-draft", async (req, res) => {
+  try {
+    if (!Array.isArray(req.body.items)) {
+      return res.status(400).json({ success: false, message: "Cart items must be an array" });
+    }
+    const draft = await prisma.cartDraft.upsert({
+      where: { userId: req.auth!.id },
+      create: { userId: req.auth!.id, items: req.body.items },
+      update: { items: req.body.items },
+    });
+    res.json({ success: true, data: draft.items });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to save cart draft" });
+  }
+});
+
 // GET /orders/next-number — preview the next order number for the POS header
 router.get("/next-number", async (_req, res) => {
   try {
@@ -340,6 +367,8 @@ router.patch("/:id/status", async (req, res) => {
       data: {
         status,
         ...(status === "COMPLETED" ? { completedAt: new Date() } : {}),
+        ...(status === "OUT_FOR_DELIVERY" ? { outForDeliveryAt: new Date() } : {}),
+        ...(status === "RECEIVED" ? { receivedAt: new Date() } : {}),
       },
     });
 

@@ -28,9 +28,18 @@ model User {
   accessGrants AccessGrant[]
   reviews      Review[]
   orders       Order[]
+  cartDraft    CartDraft?
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model CartDraft {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     Json
+  updatedAt DateTime @updatedAt
 }
 
 enum ReviewStatus {
@@ -243,6 +252,8 @@ model Order {
 
   // Delivery only
   deliveryAddress String?
+  outForDeliveryAt DateTime?
+  receivedAt      DateTime?
 
   note          String?
   subtotal      Decimal @db.Decimal(10, 2)

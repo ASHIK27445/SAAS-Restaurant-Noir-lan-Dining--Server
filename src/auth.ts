@@ -79,7 +79,8 @@ export async function authorizeRequest(req: Request, res: Response, next: NextFu
   const path = `${req.baseUrl}${req.path}`;
   if (req.auth.role === RoleEnum.Customer
     && ((req.method === "POST" && (path === "/orders/customer-create" || path === "/orders/customer-promo"))
-      || (req.method === "GET" && path === "/orders/my-orders"))) {
+      || (req.method === "GET" && (path === "/orders/my-orders" || path === "/orders/cart-draft"))
+      || (req.method === "PUT" && path === "/orders/cart-draft"))) {
     return next();
   }
   if (req.auth.role === RoleEnum.DemoAdmin) {
