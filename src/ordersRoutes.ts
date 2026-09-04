@@ -452,7 +452,10 @@ router.get("/kitchen-queue", async (_req, res) => {
 router.get("/token-display", async (_req, res) => {
   try {
     const orders = await prisma.order.findMany({
-      where: { status: { in: ["PREPARING", "SERVED", "OUT_FOR_DELIVERY", "RECEIVED"] } },
+      where: {
+        orderType: { in: ["DINE_IN", "TAKEAWAY"] },
+        status: { in: ["PREPARING", "SERVED"] },
+      },
       select: { orderNumber: true, customerName: true, status: true, orderType: true, updatedAt: true },
       orderBy: { updatedAt: "desc" },
       take: 20,
