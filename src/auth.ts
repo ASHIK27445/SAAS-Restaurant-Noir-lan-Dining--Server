@@ -67,6 +67,7 @@ function moduleForRequest(req: Request): AccessModule | null {
   if (path.startsWith("/suppliers") || path.startsWith("/supplier-contacts") || path.startsWith("/purchase-orders")) return AccessModule.SUPPLIERS;
   if (path.startsWith("/menu")) return AccessModule.MENU;
   if (path.startsWith("/orders")) return AccessModule.ORDERS;
+  if (path.startsWith("/reports")) return AccessModule.ORDERS;
   if (path.startsWith("/settings")) return AccessModule.POS;
   return null;
 }

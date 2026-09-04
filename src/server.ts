@@ -13,6 +13,7 @@ import reviewRoutes from "./reviewRoutes";
 import reservationRoutes from "./reservationRoutes";
 import publicRoutes from "./publicRoutes";
 import galleryRoutes from "./galleryRoutes";
+import reportRoutes from "./reportRoutes";
 import { AccessGrantStatus, AccessModule, RoleEnum } from "@prisma/client";
 import { authenticate, authorizeRequest, isStrongPassword, requireRole } from "./auth";
 
@@ -250,6 +251,7 @@ app.use("/employees", employeesRoutes);
 //order management
 app.use("/orders", ordersRoutes);
 app.use("/settings", posSettingsRoutes);
+app.use("/reports", reportRoutes);
 
 
 // Server start 
