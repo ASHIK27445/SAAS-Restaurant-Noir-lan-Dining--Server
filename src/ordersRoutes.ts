@@ -141,6 +141,27 @@ router.get("/", async (req, res) => {
   }
 });
 
+// GET /orders/my-orders — customer-specific tracking for delivery orders
+router.get("/my-orders", async (req, res) => {
+  try {
+    if (!req.auth) return res.status(401).json({ success: false, message: "Authentication required" });
+
+    const orders = await prisma.order.findMany({
+      where: { customerUserId: req.auth.id },
+      include: { items: { include: { menuItem: true, units: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+
+    res.json({
+      success: true,
+      data: orders.map((order) => ({ ...order, orderNumberDisplay: formatOrderNumber(order.orderNumber) })),
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to fetch your orders" });
+  }
+});
+
 // POST /orders/create
 // body: { orderType, serverStaffId?, tableNo?, guestCount?, customerName?, deliveryAddress?,
 //         note?, paymentMethod?, items: [{ menuItemId, quantity, unitPrice, note? }],
@@ -148,7 +169,7 @@ router.get("/", async (req, res) => {
 //
 // Payment timing: TAKEAWAY/DELIVERY are paid upfront right here (paymentMethod required).
 // DINE_IN stays UNPAID — payment happens later via /orders/:id/complete-with-payment.
-router.post("/create", async (req, res) => {
+async function createOrderHandler(req: any, res: any) {
   try {
     const body = req.body as {
       orderType: OrderType;
@@ -193,13 +214,14 @@ router.post("/create", async (req, res) => {
     const serviceCharge = Number((subtotal > 0 ? configuredServiceCharge : 0).toFixed(2));
     let discount = 0;
     let appliedPromoCode: string | null = null;
+    const isCustomerOrder = req.path === "/customer-create";
     if (body.promoCode) {
       const promo = await prisma.promoCode.findUnique({ where: { code: body.promoCode.trim().toUpperCase() } });
-      if (!promo || !promo.isActive || !promo.showInPos || (promo.usageLimit !== null && promo.usageCount >= promo.usageLimit)) {
+      if (!promo || !promo.isActive || (!isCustomerOrder && !promo.showInPos) || (promo.usageLimit !== null && promo.usageCount >= promo.usageLimit)) {
         return res.status(400).json({ success: false, message: "Promo code is invalid or unavailable" });
       }
       const claimed = await prisma.promoCode.updateMany({
-        where: { id: promo.id, isActive: true, showInPos: true, ...(promo.usageLimit === null ? {} : { usageCount: { lt: promo.usageLimit } }) },
+        where: { id: promo.id, isActive: true, ...(isCustomerOrder ? {} : { showInPos: true }), ...(promo.usageLimit === null ? {} : { usageCount: { lt: promo.usageLimit } }) },
         data: { usageCount: { increment: 1 } },
       });
       if (claimed.count !== 1) return res.status(400).json({ success: false, message: "Promo code limit reached" });
@@ -222,6 +244,7 @@ router.post("/create", async (req, res) => {
         tableNo: (body.orderType === "DINE_IN" ? body.tableNo : null) ?? null,
         guestCount: (body.orderType === "DINE_IN" ? body.guestCount : null) ?? null,
         customerName: body.customerName ?? null,
+        customerUserId: req.auth?.id ?? null,
         deliveryAddress: (body.orderType === "DELIVERY" ? body.deliveryAddress : null) ?? null,
         note: body.note ?? null,
         subtotal: new Decimal(subtotal.toFixed(2)),
@@ -254,6 +277,19 @@ router.post("/create", async (req, res) => {
     console.error(error);
     res.status(500).json({ success: false, message: "Failed to create order" });
   }
+}
+
+router.post("/create", createOrderHandler);
+
+router.post("/customer-create", async (req, res) => {
+  req.body = {
+    ...req.body,
+    orderType: "DELIVERY",
+    serverStaffId: undefined,
+    tableNo: undefined,
+    guestCount: undefined,
+  };
+  return createOrderHandler(req, res);
 });
 
 // PATCH /orders/:id/status  { status }

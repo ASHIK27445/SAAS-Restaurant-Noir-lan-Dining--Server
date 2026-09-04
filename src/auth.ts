@@ -76,6 +76,12 @@ export async function authorizeRequest(req: Request, res: Response, next: NextFu
   if (!req.auth) return res.status(401).json({ success: false, message: "Authentication required" });
   if (req.path === "/auth/me") return next();
   if (req.auth.role === RoleEnum.Admin) return next();
+  const path = `${req.baseUrl}${req.path}`;
+  if (req.auth.role === RoleEnum.Customer
+    && ((req.method === "POST" && path === "/orders/customer-create")
+      || (req.method === "GET" && path === "/orders/my-orders"))) {
+    return next();
+  }
   if (req.auth.role === RoleEnum.DemoAdmin) {
     return READ_METHODS.has(req.method)
       ? next()

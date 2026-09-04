@@ -27,6 +27,7 @@ model User {
 
   accessGrants AccessGrant[]
   reviews      Review[]
+  orders       Order[]
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -237,6 +238,8 @@ model Order {
   tableNo       String?
   guestCount    Int?
   customerName  String?       // dine-in pays later — note who to bill
+  customerUserId String?
+  customerUser   User?        @relation(fields: [customerUserId], references: [id], onDelete: SetNull)
 
   // Delivery only
   deliveryAddress String?
@@ -258,6 +261,7 @@ model Order {
   @@index([status])
   @@index([orderType])
   @@index([createdAt])
+  @@index([customerUserId, createdAt])
 }
 
 model OrderItem {
