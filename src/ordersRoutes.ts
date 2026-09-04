@@ -169,6 +169,30 @@ router.get("/my-orders", async (req, res) => {
 //
 // Payment timing: TAKEAWAY/DELIVERY are paid upfront right here (paymentMethod required).
 // DINE_IN stays UNPAID — payment happens later via /orders/:id/complete-with-payment.
+router.post("/customer-promo", async (req, res) => {
+  try {
+    const code = typeof req.body.code === "string" ? req.body.code.trim().toUpperCase() : "";
+    const subtotal = Number(req.body.subtotal);
+    if (!code || !Number.isFinite(subtotal) || subtotal <= 0) {
+      return res.status(400).json({ success: false, message: "Promo code and a valid subtotal are required" });
+    }
+
+    const promo = await prisma.promoCode.findUnique({ where: { code } });
+    if (!promo || !promo.isActive || (promo.usageLimit !== null && promo.usageCount >= promo.usageLimit)) {
+      return res.status(400).json({ success: false, message: "Promo code is invalid or unavailable" });
+    }
+
+    const discount = Number((subtotal * Number(promo.discountPercent) / 100).toFixed(2));
+    return res.json({
+      success: true,
+      data: { code: promo.code, discountPercent: Number(promo.discountPercent), discount },
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: "Failed to validate promo code" });
+  }
+});
+
 async function createOrderHandler(req: any, res: any) {
   try {
     const body = req.body as {
