@@ -53,17 +53,28 @@ function forecastFor(points: SalesPoint[], targetDate: Date) {
   const recentAverage = average(recentValues);
   const priorAverage = average(priorValues);
   const trend = priorAverage > 0 ? clamp(recentAverage / priorAverage, 0.75, 1.25) : 1;
-  const base = weekdayAverage > 0 ? weekdayAverage * 0.65 + recentAverage * 0.35 : recentAverage;
-  const quantity = Math.max(0, Math.round(base * trend));
   const sampleCount = points.filter((point) => point.quantity > 0).length;
+  const soldDayAverage = average(points.filter((point) => point.quantity > 0).map((point) => point.quantity));
+  const demandAverage = sampleCount < 4 ? soldDayAverage : recentAverage;
+  const base = weekdayAverage > 0 ? weekdayAverage * 0.65 + demandAverage * 0.35 : demandAverage;
+  const expectedQuantity = Math.max(0, round(base * trend));
+  const recommendedQuantity = sampleCount === 0
+    ? 0
+    : expectedQuantity > 0 && expectedQuantity < 1
+      ? 1
+      : Math.round(expectedQuantity);
   const confidence = sampleCount === 0 ? 20 : Math.min(95, 45 + sampleCount * 5);
+  const status = sampleCount === 0 ? "NO_HISTORY" : expectedQuantity < 1 ? "LOW_DEMAND" : "FORECAST";
 
   return {
     date: targetKey,
-    quantity,
+    expectedQuantity,
+    recommendedQuantity,
+    status,
     confidence,
     weekdayAverage: round(weekdayAverage),
     recentAverage: round(recentAverage),
+    soldDayAverage: round(soldDayAverage),
     trend: round(trend),
     sampleCount,
   };
@@ -84,7 +95,6 @@ router.get("/menu", requireRole(RoleEnum.Admin, RoleEnum.Manager, RoleEnum.DemoA
       prisma.order.findMany({
         where: {
           createdAt: { gte: historyStart, lt: dateAtUtcOffset(1) },
-          paymentStatus: "PAID",
           status: { not: "CANCELLED" },
         },
         select: {
@@ -115,12 +125,13 @@ router.get("/menu", requireRole(RoleEnum.Admin, RoleEnum.Manager, RoleEnum.DemoA
         price: Number(item.price),
         tomorrow,
         next7Days: {
-          quantity: forecasts.reduce((total, forecast) => total + forecast.quantity, 0),
+          expectedQuantity: round(forecasts.reduce((total, forecast) => total + forecast.expectedQuantity, 0)),
+          recommendedQuantity: forecasts.reduce((total, forecast) => total + forecast.recommendedQuantity, 0),
           averageConfidence: Math.round(average(forecasts.map((forecast) => forecast.confidence))),
         },
         forecast: forecasts,
       };
-    }).sort((left, right) => right.next7Days.quantity - left.next7Days.quantity);
+    }).sort((left, right) => right.next7Days.recommendedQuantity - left.next7Days.recommendedQuantity);
 
     return res.json({
       success: true,
