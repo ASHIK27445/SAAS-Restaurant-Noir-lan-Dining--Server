@@ -18,12 +18,12 @@ router.get("/menu", async (_req, res) => {
     } as const;
     const [categories, specials] = await Promise.all([
       prisma.category.findMany({
-        where: { isActive: true, NOT: { name: { equals: "Chef's Special", mode: "insensitive" } } },
+        where: { isActive: true, NOT: { name: { contains: "special", mode: "insensitive" } } },
         orderBy: { sortOrder: "asc" },
         select: categorySelect,
       }),
       prisma.category.findMany({
-        where: { isActive: true, name: { equals: "Chef's Special", mode: "insensitive" } },
+        where: { isActive: true, name: { contains: "special", mode: "insensitive" } },
         orderBy: { sortOrder: "asc" },
         select: categorySelect,
       }),
