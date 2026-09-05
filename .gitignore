@@ -11,3 +11,20 @@ serviceAccountKey.json
 skills-lock.json
 
 prisma/migrations
+
+dist
+
+# TypeScript build artifacts must not be written beside source files.
+src/**/*.js
+src/**/*.js.map
+src/**/*.d.ts
+src/**/*.d.ts.map
+prisma/seed/*.js
+prisma/seed/*.js.map
+prisma/seed/*.d.ts
+prisma/seed/*.d.ts.map
+prisma.config.js
+prisma.config.js.map
+prisma.config.d.ts
+prisma.config.d.ts.map
+.vercel
