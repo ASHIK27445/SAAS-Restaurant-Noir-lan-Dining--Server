@@ -68,6 +68,7 @@ function moduleForRequest(req: Request): AccessModule | null {
   if (path.startsWith("/menu")) return AccessModule.MENU;
   if (path.startsWith("/orders")) return AccessModule.ORDERS;
   if (path.startsWith("/reports")) return AccessModule.ORDERS;
+  if (path.startsWith("/assistant")) return AccessModule.ORDERS;
   if (path.startsWith("/forecasting")) return AccessModule.ORDERS;
   if (path.startsWith("/settings")) return AccessModule.POS;
   return null;

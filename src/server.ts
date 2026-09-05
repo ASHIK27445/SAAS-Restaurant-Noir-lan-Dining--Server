@@ -15,6 +15,7 @@ import publicRoutes from "./publicRoutes";
 import galleryRoutes from "./galleryRoutes";
 import reportRoutes from "./reportRoutes";
 import forecastRoutes from "./forecastRoutes";
+import assistantRoutes from "./assistantRoutes";
 import { AccessGrantStatus, AccessModule, RoleEnum } from "@prisma/client";
 import { authenticate, authorizeRequest, isStrongPassword, requireRole } from "./auth";
 
@@ -254,6 +255,7 @@ app.use("/orders", ordersRoutes);
 app.use("/settings", posSettingsRoutes);
 app.use("/reports", reportRoutes);
 app.use("/forecasting", forecastRoutes);
+app.use("/assistant", assistantRoutes);
 
 
 // Server start 
