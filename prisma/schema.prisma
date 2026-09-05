@@ -171,6 +171,7 @@ model MenuItem {
   dietaryType     DietaryType[]
   allergens       MenuItemAllergen[]
   orderItems      OrderItem[]
+  recipes         MenuRecipe[]
 
   categoryId String 
   category Category @relation(fields: [categoryId], references: [id])
@@ -199,6 +200,46 @@ model MenuItemAllergen {
   allergen     Allergen   @relation(fields: [allergenId], references: [id])
 
   @@id([menuItemId, allergenId])
+}
+
+model MenuRecipe {
+  id         String   @id @default(cuid())
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  version    Int
+  isActive   Boolean  @default(false)
+  changeNote String?
+  ingredients MenuRecipeIngredient[]
+  createdAt  DateTime @default(now())
+
+  @@unique([menuItemId, version])
+  @@index([menuItemId, isActive])
+}
+
+model MenuRecipeIngredient {
+  id                String      @id @default(cuid())
+  recipeId          String
+  recipe            MenuRecipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredientName    String
+  quantity          Decimal     @db.Decimal(10, 3)
+  unit              String
+  mapping           MenuRecipeMapping?
+
+  @@index([recipeId])
+}
+
+model MenuRecipeMapping {
+  id                  String             @id @default(cuid())
+  recipeIngredientId  String
+  recipeIngredient    MenuRecipeIngredient @relation(fields: [recipeIngredientId], references: [id], onDelete: Cascade)
+  inventoryItemId     String
+  inventoryItem       InventoryItem      @relation(fields: [inventoryItemId], references: [id])
+  unitPriceSnapshot   Decimal            @db.Decimal(10, 2)
+  ingredientCost      Decimal            @db.Decimal(10, 2)
+  createdAt           DateTime           @default(now())
+
+  @@unique([recipeIngredientId])
+  @@index([inventoryItemId])
 }
 
 enum DietaryType {
@@ -558,6 +599,7 @@ model InventoryItem {
 
   stockMovements     StockMovement[]
   purchaseOrderItems PurchaseOrderItem[]
+  recipeMappings     MenuRecipeMapping[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

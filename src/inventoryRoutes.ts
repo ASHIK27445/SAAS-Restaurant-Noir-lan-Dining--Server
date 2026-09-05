@@ -14,6 +14,10 @@ function stockStatus(currentStock: Decimal, minThreshold: Decimal) {
   return "in-stock";
 }
 
+function calendarDateUtc(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
 // ───────────── Inventory ─────────────
 
 // GET /inventory  ?search=&status=&category=&page=&pageSize=
@@ -418,7 +422,7 @@ router.get("/suppliers/directory", async (_req, res) => {
       for (const po of receivedOrders) {
         if (po.expectedDate && po.deliveredDate) {
           onTimeTrackedCount += 1;
-          if (po.deliveredDate <= po.expectedDate) onTimeCount += 1;
+          if (calendarDateUtc(po.deliveredDate) <= calendarDateUtc(po.expectedDate)) onTimeCount += 1;
         }
       }
 
@@ -687,7 +691,7 @@ router.patch("/purchase-orders/:id/status", async (req, res) => {
         },
         include: { items: { include: { inventoryItem: true } }, supplier: true },
       });
-    });
+    }, { maxWait: 10_000, timeout: 30_000 });
 
     res.json({ success: true, message: "Purchase order received", data: updatedOrder });
   } catch (error) {
@@ -798,7 +802,7 @@ router.get("/suppliers/:id", async (req, res) => {
       const deliveredDate: Date = po.deliveredDate;
 
       onTimeTrackedCount += 1;
-      if (deliveredDate <= expectedDate) {
+      if (calendarDateUtc(deliveredDate) <= calendarDateUtc(expectedDate)) {
         onTimeCount += 1;
       }
     }

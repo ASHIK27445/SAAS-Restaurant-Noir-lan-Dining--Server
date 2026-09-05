@@ -4,6 +4,23 @@ import { prisma } from "./prisma";
 
 const router = Router();
 
+function unitGroup(unit: string) {
+  const normalized = unit.trim().toLowerCase();
+  if (["g", "gram", "grams"].includes(normalized)) return { group: "mass", factor: 1 };
+  if (["kg", "kilogram", "kilograms"].includes(normalized)) return { group: "mass", factor: 1000 };
+  if (["ml", "milliliter", "milliliters"].includes(normalized)) return { group: "volume", factor: 1 };
+  if (["l", "liter", "liters", "litre", "litres"].includes(normalized)) return { group: "volume", factor: 1000 };
+  if (["unit", "units", "piece", "pieces", "pc", "pcs"].includes(normalized)) return { group: "count", factor: 1 };
+  return { group: normalized, factor: 1 };
+}
+
+function convertQuantity(quantity: number, fromUnit: string, toUnit: string) {
+  const from = unitGroup(fromUnit);
+  const to = unitGroup(toUnit);
+  if (from.group !== to.group) return null;
+  return quantity * from.factor / to.factor;
+}
+
 //menu-create
 router.post('/create', async(req, res)=>{
     try {
@@ -312,6 +329,107 @@ router.get("/items", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: "Failed to fetch menu items" });
+  }
+});
+
+// GET /menu/items/:id/recipes
+router.get("/items/:id/recipes", async (req, res) => {
+  try {
+    const recipes = await prisma.menuRecipe.findMany({
+      where: { menuItemId: req.params.id },
+      include: { ingredients: { include: { mapping: { include: { inventoryItem: true } } } } },
+      orderBy: { version: "desc" },
+    });
+    res.json({ success: true, data: recipes });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to fetch recipes" });
+  }
+});
+
+// POST /menu/items/:id/recipes
+// Creates a new immutable recipe definition version and activates it.
+router.post("/items/:id/recipes", async (req, res) => {
+  try {
+    const { ingredients, changeNote } = req.body as {
+      ingredients?: { ingredientName: string; quantity: number; unit: string }[];
+      changeNote?: string;
+    };
+    if (!Array.isArray(ingredients) || ingredients.length === 0) {
+      return res.status(400).json({ success: false, message: "At least one ingredient is required" });
+    }
+    if (ingredients.some((ingredient) => !ingredient.ingredientName?.trim() || !ingredient.unit || Number(ingredient.quantity) <= 0)) {
+      return res.status(400).json({ success: false, message: "Each recipe ingredient needs a name, unit, and positive quantity" });
+    }
+    if (new Set(ingredients.map((ingredient) => ingredient.ingredientName.trim().toLowerCase())).size !== ingredients.length) {
+      return res.status(400).json({ success: false, message: "An ingredient can only be added once per recipe" });
+    }
+
+    const recipe = await prisma.$transaction(async (tx) => {
+      const menuItem = await tx.menuItem.findUnique({ where: { id: req.params.id }, select: { id: true } });
+      if (!menuItem) throw new Error("MENU_ITEM_NOT_FOUND");
+      const latest = await tx.menuRecipe.findFirst({ where: { menuItemId: req.params.id }, orderBy: { version: "desc" }, select: { version: true } });
+      const version = (latest?.version ?? 0) + 1;
+      await tx.menuRecipe.updateMany({ where: { menuItemId: req.params.id, isActive: true }, data: { isActive: false } });
+      return tx.menuRecipe.create({
+        data: {
+          menuItemId: req.params.id,
+          version,
+          isActive: true,
+          changeNote: changeNote?.trim() || null,
+          ingredients: {
+            create: ingredients.map((ingredient) => ({
+              ingredientName: ingredient.ingredientName.trim(),
+              quantity: new Decimal(Number(ingredient.quantity).toFixed(3)),
+              unit: ingredient.unit.trim(),
+            })),
+          },
+        },
+        include: { ingredients: { include: { mapping: { include: { inventoryItem: true } } } } },
+      });
+    });
+    return res.status(201).json({ success: true, data: recipe });
+  } catch (error: any) {
+    console.error(error);
+    if (error.message === "MENU_ITEM_NOT_FOUND") return res.status(404).json({ success: false, message: "Menu item not found" });
+    return res.status(500).json({ success: false, message: "Failed to save recipe" });
+  }
+});
+
+// PUT /menu/items/:id/recipes/:recipeId/mappings
+router.put("/items/:id/recipes/:recipeId/mappings", async (req, res) => {
+  try {
+    const mappings = req.body?.mappings as { recipeIngredientId: string; inventoryItemId: string }[];
+    if (!Array.isArray(mappings)) return res.status(400).json({ success: false, message: "Mappings are required" });
+
+    const result = await prisma.$transaction(async (tx) => {
+      const recipe = await tx.menuRecipe.findFirst({ where: { id: req.params.recipeId, menuItemId: req.params.id }, include: { ingredients: true } });
+      if (!recipe) throw new Error("RECIPE_NOT_FOUND");
+      const inventoryItems = await tx.inventoryItem.findMany({ where: { id: { in: mappings.map((mapping) => mapping.inventoryItemId) } } });
+      if (inventoryItems.length !== mappings.length) throw new Error("INVENTORY_ITEM_NOT_FOUND");
+      const ingredientIds = new Set(recipe.ingredients.map((ingredient) => ingredient.id));
+      if (mappings.some((mapping) => !ingredientIds.has(mapping.recipeIngredientId))) throw new Error("INGREDIENT_NOT_FOUND");
+
+      const mappingData = mappings.map((mapping) => {
+        const ingredient = recipe.ingredients.find((item) => item.id === mapping.recipeIngredientId)!;
+        const inventoryItem = inventoryItems.find((item) => item.id === mapping.inventoryItemId)!;
+        const convertedQuantity = convertQuantity(Number(ingredient.quantity), ingredient.unit, inventoryItem.unit);
+        if (convertedQuantity === null) throw new Error("UNIT_MISMATCH");
+        const cost = convertedQuantity * Number(inventoryItem.costPerUnit);
+        return { recipeIngredientId: ingredient.id, inventoryItemId: inventoryItem.id, unitPriceSnapshot: new Decimal(Number(inventoryItem.costPerUnit).toFixed(2)), ingredientCost: new Decimal(cost.toFixed(2)) };
+      });
+      await tx.menuRecipeMapping.deleteMany({ where: { recipeIngredientId: { in: recipe.ingredients.map((ingredient) => ingredient.id) } } });
+      if (mappingData.length > 0) await tx.menuRecipeMapping.createMany({ data: mappingData });
+      return tx.menuRecipe.findUnique({ where: { id: recipe.id }, include: { ingredients: { include: { mapping: { include: { inventoryItem: true } } } } } });
+    }, { maxWait: 10_000, timeout: 30_000 });
+    return res.json({ success: true, data: result });
+  } catch (error: any) {
+    if (error.message === "RECIPE_NOT_FOUND") return res.status(404).json({ success: false, message: "Recipe not found" });
+    if (error.message === "INVENTORY_ITEM_NOT_FOUND") return res.status(404).json({ success: false, message: "One or more inventory items not found" });
+    if (error.message === "INGREDIENT_NOT_FOUND") return res.status(400).json({ success: false, message: "Mapping contains an ingredient outside this recipe" });
+    if (error.message === "UNIT_MISMATCH") return res.status(400).json({ success: false, message: "Recipe unit and inventory unit are not compatible" });
+    console.error(error);
+    return res.status(500).json({ success: false, message: "Failed to save ingredient mapping" });
   }
 });
 
