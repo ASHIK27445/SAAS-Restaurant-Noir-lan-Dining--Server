@@ -34,7 +34,8 @@ function timeStringToHours(time: string): number {
 }
 
 function attendanceDateTime(date: string, time: string, after?: Date): Date {
-  const value = new Date(`${date}T${time}:00`);
+  // Attendance schedules are entered as Bangladesh local time, regardless of server timezone.
+  const value = new Date(`${date}T${time}:00+06:00`);
   if (after && value <= after) value.setDate(value.getDate() + 1);
   return value;
 }
