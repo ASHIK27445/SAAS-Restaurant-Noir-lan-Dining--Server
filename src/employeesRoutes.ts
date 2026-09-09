@@ -120,6 +120,7 @@ router.post("/staff/create", async (req, res) => {
       const createdStaff = await transaction.staff.create({
         data: {
         name, email, role, title,
+        isActive: true,
         phone: phone || "",
         avatar: image || null,
         systemAccess: systemAccess ?? true,
@@ -347,7 +348,7 @@ router.get("/attendance", async (req, res) => {
     if (!dateStr) return res.status(400).json({ success: false, message: "date is required" });
     const date = dateOnly(dateStr);
 
-    const staff = await prisma.staff.findMany({ where: { role: { not: "Admin" } }, orderBy: { name: "asc" } });
+    const staff = await prisma.staff.findMany({ where: { isActive: true, role: { notIn: ["Admin", "DemoAdmin"] } }, orderBy: { name: "asc" } });
 
     const existing = await prisma.dailyAttendance.findMany({
       where: { date },

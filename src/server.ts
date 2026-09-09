@@ -100,6 +100,10 @@ app.patch("/auth/users/:id", requireRole(RoleEnum.Admin), async (req, res) => {
   if (isActive !== undefined) data.isActive = isActive;
   if (emailVerificationNeeded !== undefined) data.emailVerificationNeeded = emailVerificationNeeded;
   const user = await prisma.user.update({ where: { id: userId }, data });
+  const staff = await prisma.staff.findUnique({ where: { email: user.email } });
+  if (staff && isActive !== undefined) {
+    await prisma.staff.update({ where: { id: staff.id }, data: { isActive, ...(isActive ? {} : { online: false }) } });
+  }
   await admin.auth().updateUser(user.firebaseUid, {
     disabled: isActive === false,
     ...(name !== undefined ? { displayName: name } : {}),
@@ -113,9 +117,52 @@ app.delete("/auth/users/:id", requireRole(RoleEnum.Admin), async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) return res.status(404).json({ success: false, message: "User not found" });
   if (user.id === req.auth!.id) return res.status(400).json({ success: false, message: "You cannot delete your own account" });
-  await admin.auth().deleteUser(user.firebaseUid);
-  await prisma.user.delete({ where: { id: user.id } });
-  return res.json({ success: true, message: "User deleted" });
+  const staff = await prisma.staff.findUnique({ where: { email: user.email } });
+  if (staff) {
+    await prisma.$transaction(async (transaction) => {
+      await transaction.dailyAttendance.deleteMany({ where: { staffId: staff.id } });
+      await transaction.rateHistory.deleteMany({ where: { staffId: staff.id } });
+      await transaction.openShiftAssignment.deleteMany({ where: { staffId: staff.id } });
+      await transaction.cashierSetting.updateMany({ where: { activeCashierStaffId: staff.id }, data: { activeCashierStaffId: null } });
+      await transaction.staff.delete({ where: { id: staff.id } });
+      await transaction.user.delete({ where: { id: user.id } });
+    });
+  } else {
+    await prisma.user.delete({ where: { id: user.id } });
+  }
+  await admin.auth().deleteUser(user.firebaseUid).catch((error: any) => {
+    if (error?.code !== "auth/user-not-found") throw error;
+  });
+  return res.json({ success: true, message: "User and linked employee permanently deleted" });
+});
+
+app.patch("/auth/users/:id/deactivate", requireRole(RoleEnum.Admin), async (req, res) => {
+  const userId = req.params.id;
+  if (typeof userId !== "string") return res.status(400).json({ success: false, message: "User id is required" });
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) return res.status(404).json({ success: false, message: "User not found" });
+  if (user.id === req.auth!.id) return res.status(400).json({ success: false, message: "You cannot deactivate your own account" });
+  const staff = await prisma.staff.findUnique({ where: { email: user.email } });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.user.update({ where: { id: user.id }, data: { isActive: false } });
+    if (staff) await transaction.staff.update({ where: { id: staff.id }, data: { isActive: false, online: false } });
+  });
+  await admin.auth().updateUser(user.firebaseUid, { disabled: true });
+  return res.json({ success: true, message: "User deactivated" });
+});
+
+app.patch("/auth/users/:id/restore", requireRole(RoleEnum.Admin), async (req, res) => {
+  const userId = req.params.id;
+  if (typeof userId !== "string") return res.status(400).json({ success: false, message: "User id is required" });
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) return res.status(404).json({ success: false, message: "User not found" });
+  const staff = await prisma.staff.findUnique({ where: { email: user.email } });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.user.update({ where: { id: user.id }, data: { isActive: true } });
+    if (staff) await transaction.staff.update({ where: { id: staff.id }, data: { isActive: true } });
+  });
+  await admin.auth().updateUser(user.firebaseUid, { disabled: false });
+  return res.json({ success: true, message: "User restored" });
 });
 
 app.get("/auth/access-grants", requireRole(RoleEnum.Admin, RoleEnum.Manager), async (_req, res) => {
@@ -124,9 +171,20 @@ app.get("/auth/access-grants", requireRole(RoleEnum.Admin, RoleEnum.Manager), as
 });
 
 app.post("/auth/access-grants", requireRole(RoleEnum.Admin, RoleEnum.Manager), async (req, res) => {
-  const { userId, module } = req.body as { userId?: string; module?: AccessModule };
-  if (!userId || !module || !Object.values(AccessModule).includes(module)) {
+  const { userId: requestedId, module } = req.body as { userId?: string; module?: AccessModule };
+  if (!requestedId || !module || !Object.values(AccessModule).includes(module)) {
     return res.status(400).json({ success: false, message: "userId and a valid module are required" });
+  }
+  // Permission Management selects Staff records, while grants belong to User records.
+  // Resolve a selected staff id to its linked user before writing the foreign key.
+  let userId = requestedId;
+  const selectedUser = await prisma.user.findUnique({ where: { id: requestedId } });
+  if (!selectedUser) {
+    const selectedStaff = await prisma.staff.findUnique({ where: { id: requestedId } });
+    if (!selectedStaff) return res.status(404).json({ success: false, message: "User or staff member not found" });
+    const linkedUser = await prisma.user.findUnique({ where: { email: selectedStaff.email } });
+    if (!linkedUser) return res.status(404).json({ success: false, message: "No user account is linked to this staff member" });
+    userId = linkedUser.id;
   }
   const isAdmin = req.auth!.role === RoleEnum.Admin;
   const grant = await prisma.accessGrant.upsert({
@@ -146,6 +204,15 @@ app.patch("/auth/access-grants/:id", requireRole(RoleEnum.Admin), async (req, re
   if (typeof grantId !== "string") return res.status(400).json({ success: false, message: "Grant id is required" });
   const grant = await prisma.accessGrant.update({ where: { id: grantId }, data: { status: status as AccessGrantStatus, approvedBy: req.auth!.id, approvedAt: new Date() } });
   return res.json({ success: true, data: grant });
+});
+
+app.delete("/auth/access-grants/:id", requireRole(RoleEnum.Admin), async (req, res) => {
+  const grantId = req.params.id;
+  if (typeof grantId !== "string") return res.status(400).json({ success: false, message: "Grant id is required" });
+  const grant = await prisma.accessGrant.findUnique({ where: { id: grantId } });
+  if (!grant) return res.status(404).json({ success: false, message: "Access grant not found" });
+  await prisma.accessGrant.delete({ where: { id: grantId } });
+  return res.json({ success: true, message: "Access removed" });
 });
 
 app.patch("/auth/users/:uid/password", requireRole(RoleEnum.Admin), async (req, res) => {
