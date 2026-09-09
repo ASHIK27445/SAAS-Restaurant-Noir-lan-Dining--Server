@@ -28,3 +28,5 @@ prisma.config.js.map
 prisma.config.d.ts
 prisma.config.d.ts.map
 .vercel
+
+RESPONSE_STRUCTURE.md

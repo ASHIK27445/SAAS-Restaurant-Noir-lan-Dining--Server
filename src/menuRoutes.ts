@@ -68,7 +68,7 @@ router.post('/create', async(req, res)=>{
       },
     });
 
-    console.log(menuItem)
+    // console.log(menuItem)
     res.json(menuItem)
     } catch (err: any) {
         res.status(500).json({
